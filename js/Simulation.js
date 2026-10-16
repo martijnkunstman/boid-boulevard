@@ -169,9 +169,13 @@ class Simulation {
         // Sensor visibility toggle
         const chkAllSensors = document.getElementById('chk-all-sensors');
         if (chkAllSensors) {
-            chkAllSensors.addEventListener('change', e => {
-                this.renderer.showAllSensors = e.target.checked;
-            });
+            this.renderer.showAllSensors = chkAllSensors.checked;
+            const updateSensorToggle = () => {
+                this.renderer.showAllSensors = chkAllSensors.checked;
+                this.renderer.render(this.city, this.boids, this.getInspectedBoid());
+            };
+            chkAllSensors.addEventListener('change', updateSensorToggle);
+            chkAllSensors.addEventListener('input', updateSensorToggle);
         }
 
         // View screen switcher tabs

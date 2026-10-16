@@ -202,7 +202,7 @@ class SimulationRenderer {
     _renderBoidSensors(ctx, boid, isPrimary = true) {
         if (!boid.sensor || !boid.sensor.rays) return;
         ctx.save();
-        const alpha = isPrimary ? 0.78 : 0.25;
+        const alpha = isPrimary ? 0.92 : 0.68;
 
         for (const ray of boid.sensor.rays) {
             let hitX = ray.endX;
@@ -216,20 +216,20 @@ class SimulationRenderer {
             } else if (ray.roadHit) {
                 hitX = ray.roadHitX;
                 hitY = ray.roadHitY;
-                color = `rgba(245, 158, 11, ${alpha})`; // Side of road = amber
+                color = `rgba(251, 191, 36, ${alpha})`; // Side of road = bright amber
             }
 
             ctx.strokeStyle = color;
-            ctx.lineWidth = isPrimary ? 1.4 : 0.8;
+            ctx.lineWidth = isPrimary ? 1.8 : 1.25;
             ctx.beginPath();
             ctx.moveTo(ray.ox, ray.oy);
             ctx.lineTo(hitX, hitY);
             ctx.stroke();
 
-            if (isPrimary && (ray.roadHit || ray.boidHit)) {
+            if (ray.roadHit || ray.boidHit) {
                 ctx.fillStyle = color;
                 ctx.beginPath();
-                ctx.arc(hitX, hitY, 2.6, 0, Math.PI * 2);
+                ctx.arc(hitX, hitY, isPrimary ? 3.0 : 2.2, 0, Math.PI * 2);
                 ctx.fill();
             }
         }
