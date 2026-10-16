@@ -21,7 +21,7 @@ class City {
     }
 
     update(dt) {
-        // Stateless city road network (stoplights removed)
+        // Stateless city road network: nothing to update per step
     }
 
     /**

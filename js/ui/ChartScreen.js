@@ -3,17 +3,17 @@
  *   1. Best & Average Fitness per Generation
  *   2. Best & Average Distance Traveled per Generation
  *   3. Average Collisions (Road + Boid) per Generation
- *   4. Stoplight Compliance % & Live Fitness Histogram
+ *   4. Average Population Speed per Generation
  */
 class ChartScreen {
     /**
-     * @param {object} canvases - { fitnessCanvas, distanceCanvas, collisionCanvas, complianceCanvas }
+     * @param {object} canvases - { fitnessCanvas, distanceCanvas, collisionCanvas, speedCanvas }
      */
     constructor(canvases) {
         this.fitnessCanvas = canvases.fitnessCanvas;
         this.distanceCanvas = canvases.distanceCanvas;
         this.collisionCanvas = canvases.collisionCanvas;
-        this.complianceCanvas = canvases.complianceCanvas;
+        this.speedCanvas = canvases.speedCanvas;
     }
 
     /**
@@ -53,8 +53,8 @@ class ChartScreen {
             });
         }
 
-        if (this.complianceCanvas) {
-            this._drawLineChart(this.complianceCanvas, data, {
+        if (this.speedCanvas) {
+            this._drawLineChart(this.speedCanvas, data, {
                 title: 'Average Population Speed per Generation (px/s)',
                 series: [
                     { key: 'avgSpeed', label: 'Avg Speed (px/s)', color: '#d97706' }

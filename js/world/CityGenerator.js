@@ -4,7 +4,6 @@
  *  - Clean, less complicated layout with spacious blocks
  *  - Internal diagonal roads and orthogonal streets
  *  - Strictly enforces <= 4 connected roads at every crossing
- *  - Crossings equipped with multi-phase stoplights (TrafficLights)
  */
 class CityGenerator {
     static MAX_ROADS_PER_NODE = 4;

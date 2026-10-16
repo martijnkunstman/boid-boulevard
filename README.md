@@ -38,7 +38,7 @@
 - **Three Built-In Screens**
   1. **City Simulation Screen**: Interactive canvas view of the city, boids, and raycast sensors (click any boid to inspect it).
   2. **Debug Screen**: Live neural network topology & synapse activation visualizer, steering/throttle gauges, sensor readouts, and city/storage diagnostics.
-  3. **Training Progress Charts Screen**: Multi-generation line charts for Best/Average Fitness, Average Distance Traveled, Average Collisions, and Road Alignment & Speed Efficiency.
+  3. **Training Progress Charts Screen**: Multi-generation line charts for Best/Average Fitness, Average Distance Traveled, Average Collisions, and Average Population Speed.
 
 ---
 
@@ -47,18 +47,17 @@
 Each generation runs for a fixed duration (default `30s`, or `1,800` physics steps at `60 Hz`). At every step, each boid's fitness is updated based on its driving behavior:
 
 - **Rewards**:
-  - Forward distance traveled along the road (`+1.65` per pixel)
-  - Alignment with the road axis and maintaining steady cruising speed
+  - Forward distance traveled along the road (`+0.25` per pixel), weighted by alignment with the road direction (`cos(angle)`); only counted while moving forward and roughly aligned with the road
 - **Penalties**:
-  - Scraping or hitting road borders (`-5.5` per impact plus continuous rubbing penalty)
-  - Colliding with other boids (`-12.0` per collision)
-  - Idling or stalling (`-4.0 / sec`)
-  - Driving in reverse (`-3.5 / sec`)
+  - Hitting road borders (`-5.0` per impact, with a `0.45s` cooldown)
+  - Rear-ending another boid (`-4.5` per collision for the boid at fault, with a `0.45s` cooldown)
+  - Idling or stalling below `6 px/s` (`-1.2 / sec`); a boid stuck for more than `3.6s` is respawned at a new location
+  - Driving in reverse (`-0.1` per pixel reversed)
 
 At the end of a generation, `Trainer` ranks all boids by fitness:
-1. **Elitism**: The top 6 brains (and the all-time best brain) are copied unchanged into the next generation.
-2. **Tournament Selection & Crossover**: Top-performing boids are selected via tournament selection and combined via uniform weight/bias crossover.
-3. **Gaussian Mutation**: Offspring weights and biases receive random perturbations (`mutationRate = 0.14`, `mutationStrength = 0.24`) to discover better driving behaviors.
+1. **Elitism**: The top 12% of brains (at least 4; 6 with the default population of 55), including the all-time best brain, are copied unchanged into the next generation.
+2. **Tournament Selection & Crossover**: Parents are picked by tournament selection (`k = 4`) from the top 55% of the population and combined via neuron-wise and per-weight crossover.
+3. **Gaussian Mutation**: Offspring weights and biases receive random perturbations (`mutationRate = 0.14`, `mutationStrength = 0.24`), clamped to `[-3.5, 3.5]`. The last 6 slots are fine-tuned copies of the top 3 brains with smaller mutations.
 
 ---
 
