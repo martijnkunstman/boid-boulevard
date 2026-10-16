@@ -411,12 +411,8 @@ class Simulation {
     _stepSimulation(dt) {
         this.city.update(dt);
 
-        for (let i = 0; i < this.boids.length; i++) {
-            this.boids[i].update(dt, this.city, this.boids);
-        }
-
-        // Prevent boids from collapsing into each other or getting pushed off-road
-        Boid.resolveBoidCollisions(this.boids, this.city);
+        // Update all boids (sensors use the spatial grid) and resolve boid-to-boid collisions
+        Boid.stepAll(this.boids, this.city, dt);
 
         this.trainer.generationTimer += dt;
         if (this.trainer.generationTimer >= this.trainer.generationDuration) {

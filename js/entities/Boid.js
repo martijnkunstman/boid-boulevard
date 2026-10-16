@@ -137,7 +137,7 @@ class Boid {
      * @param {City} city
      * @param {Boid[]} allBoids
      */
-    update(dt, city, allBoids) {
+    update(dt, city, allBoids, grid = null) {
         this.timeAlive += dt;
         if (this.collisionCooldown > 0) {
             this.collisionCooldown = Math.max(0, this.collisionCooldown - dt);
@@ -165,7 +165,7 @@ class Boid {
         this.travelSign = roadState.travelSign;
 
         // 2. Update front raycast sensors (road borders and boids in front)
-        this.sensor.update(city, allBoids);
+        this.sensor.update(city, allBoids, grid);
 
         // 3. Populate 17-element neural network input vector in-place (zero allocation)
         const normSpeed = Math.max(-1, Math.min(1, this.speed / this.maxSpeed));
@@ -365,91 +365,139 @@ class Boid {
     }
 
     /**
+     * Advances all boids by one simulation step: buckets them into the city's spatial grid,
+     * updates each boid (sensors query the grid), then resolves boid-to-boid collisions.
+     * @param {Boid[]} boids
+     * @param {City} city
+     * @param {number} dt
+     */
+    static stepAll(boids, city, dt) {
+        const grid = city.boidGrid;
+        grid.rebuild(boids);
+        for (let i = 0; i < boids.length; i++) {
+            boids[i].update(dt, city, boids, grid);
+        }
+        Boid.resolveBoidCollisions(boids, city, grid);
+    }
+
+    /**
      * Resolves pairwise boid-to-boid physical separation so boids NEVER collapse/stack onto each other
      * and never get pushed outside the road boundaries.
+     * With a grid, only boids in the same or adjacent cells are paired (the grid is rebuilt first,
+     * since boids moved during the step); without one, every pair is checked.
      * @param {Boid[]} boids
      * @param {City|null} city
+     * @param {SpatialGrid|null} grid
      */
-    static resolveBoidCollisions(boids, city = null) {
+    static resolveBoidCollisions(boids, city = null, grid = null) {
         const n = boids.length;
+
+        if (!grid) {
+            for (let i = 0; i < n; i++) {
+                for (let j = i + 1; j < n; j++) {
+                    Boid._resolvePair(boids[i], boids[j], city);
+                }
+            }
+            return;
+        }
+
+        grid.rebuild(boids);
+        const { cols, rows, cellStart, items, boidCell } = grid;
         for (let i = 0; i < n; i++) {
-            const a = boids[i];
-            for (let j = i + 1; j < n; j++) {
-                const b = boids[j];
+            const cell = boidCell[i];
+            const col = cell % cols;
+            const row = (cell - col) / cols;
+            const r0 = row > 0 ? row - 1 : 0;
+            const r1 = row < rows - 1 ? row + 1 : row;
+            const c0 = col > 0 ? col - 1 : 0;
+            const c1 = col < cols - 1 ? col + 1 : col;
 
-                const dx = b.x - a.x;
-                const dy = b.y - a.y;
-                const distSq = dx * dx + dy * dy;
-
-                // Quick reject using each boid's largest (lengthwise) collision radius
-                const maxDist = a.collisionLength + b.collisionLength;
-                if (distSq >= maxDist * maxDist || distSq <= 1e-6) continue;
-
-                const dist = Math.sqrt(distSq);
-                const nx = dx / dist;
-                const ny = dy / dist;
-
-                // Orientation-aware contact distance: lengthwise radius front-to-back, widthwise radius
-                // side-by-side, so boids passing in opposite lanes do not count as colliding
-                const minDist = a._collisionRadiusToward(nx, ny) + b._collisionRadiusToward(-nx, -ny);
-
-                if (dist < minDist) {
-                    const overlap = (minDist - dist) + 0.5;
-
-                    const totalMass = a.mass + b.mass;
-                    const ratioA = b.mass / totalMass;
-                    const ratioB = a.mass / totalMass;
-
-                    // Push apart so they never collapse into one another, while staying on road
-                    const nextAX = a.x - nx * overlap * ratioA;
-                    const nextAY = a.y - ny * overlap * ratioA;
-                    const nextBX = b.x + nx * overlap * ratioB;
-                    const nextBY = b.y + ny * overlap * ratioB;
-
-                    if (!city || city.isPointOnRoad(nextAX, nextAY)) {
-                        a.x = nextAX;
-                        a.y = nextAY;
-                    }
-                    if (!city || city.isPointOnRoad(nextBX, nextBY)) {
-                        b.x = nextBX;
-                        b.y = nextBY;
-                    }
-
-                    // Determine who rear-ended whom (or a head-on crash) and damp velocity
-                    const aForwardDot = Math.cos(a.heading) * nx + Math.sin(a.heading) * ny;
-                    const bForwardDot = -(Math.cos(b.heading) * nx + Math.sin(b.heading) * ny);
-                    const headingDot = Math.cos(a.heading - b.heading);
-
-                    if (headingDot < -0.5 && aForwardDot > 0.2 && bForwardDot > 0.2) {
-                        // Head-on: both drove into each other, both are at fault
-                        for (const boid of [a, b]) {
-                            boid.speed *= 0.3;
-                            if (boid.collisionCooldown <= 0) {
-                                boid.boidCollisions++;
-                                boid.headOnCollisions++;
-                                boid.fitness -= 9.0;
-                                boid.collisionCooldown = 0.45;
-                                if (city) city.crashHeat.add(boid.x, boid.y);
-                            }
-                        }
-                    } else if (aForwardDot > bForwardDot) {
-                        a.speed = Math.min(a.speed * 0.5, b.speed * 0.85);
-                        if (a.collisionCooldown <= 0) {
-                            a.boidCollisions++;
-                            a.fitness -= 4.5;
-                            a.collisionCooldown = 0.45;
-                            if (city) city.crashHeat.add(a.x, a.y);
-                        }
-                    } else {
-                        b.speed = Math.min(b.speed * 0.5, a.speed * 0.85);
-                        if (b.collisionCooldown <= 0) {
-                            b.boidCollisions++;
-                            b.fitness -= 4.5;
-                            b.collisionCooldown = 0.45;
-                            if (city) city.crashHeat.add(b.x, b.y);
+            for (let r = r0; r <= r1; r++) {
+                for (let c = c0; c <= c1; c++) {
+                    const neighborCell = r * cols + c;
+                    const end = cellStart[neighborCell + 1];
+                    for (let k = cellStart[neighborCell]; k < end; k++) {
+                        const j = items[k];
+                        if (j > i) {
+                            Boid._resolvePair(boids[i], boids[j], city);
                         }
                     }
                 }
+            }
+        }
+    }
+
+    static _resolvePair(a, b, city) {
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const distSq = dx * dx + dy * dy;
+
+        // Quick reject using each boid's largest (lengthwise) collision radius
+        const maxDist = a.collisionLength + b.collisionLength;
+        if (distSq >= maxDist * maxDist || distSq <= 1e-6) return;
+
+        const dist = Math.sqrt(distSq);
+        const nx = dx / dist;
+        const ny = dy / dist;
+
+        // Orientation-aware contact distance: lengthwise radius front-to-back, widthwise radius
+        // side-by-side, so boids passing in opposite lanes do not count as colliding
+        const minDist = a._collisionRadiusToward(nx, ny) + b._collisionRadiusToward(-nx, -ny);
+        if (dist >= minDist) return;
+
+        const overlap = (minDist - dist) + 0.5;
+
+        const totalMass = a.mass + b.mass;
+        const ratioA = b.mass / totalMass;
+        const ratioB = a.mass / totalMass;
+
+        // Push apart so they never collapse into one another, while staying on road
+        const nextAX = a.x - nx * overlap * ratioA;
+        const nextAY = a.y - ny * overlap * ratioA;
+        const nextBX = b.x + nx * overlap * ratioB;
+        const nextBY = b.y + ny * overlap * ratioB;
+
+        if (!city || city.isPointOnRoad(nextAX, nextAY)) {
+            a.x = nextAX;
+            a.y = nextAY;
+        }
+        if (!city || city.isPointOnRoad(nextBX, nextBY)) {
+            b.x = nextBX;
+            b.y = nextBY;
+        }
+
+        // Determine who rear-ended whom (or a head-on crash) and damp velocity
+        const aForwardDot = Math.cos(a.heading) * nx + Math.sin(a.heading) * ny;
+        const bForwardDot = -(Math.cos(b.heading) * nx + Math.sin(b.heading) * ny);
+        const headingDot = Math.cos(a.heading - b.heading);
+
+        if (headingDot < -0.5 && aForwardDot > 0.2 && bForwardDot > 0.2) {
+            // Head-on: both drove into each other, both are at fault
+            for (const boid of [a, b]) {
+                boid.speed *= 0.3;
+                if (boid.collisionCooldown <= 0) {
+                    boid.boidCollisions++;
+                    boid.headOnCollisions++;
+                    boid.fitness -= 9.0;
+                    boid.collisionCooldown = 0.45;
+                    if (city) city.crashHeat.add(boid.x, boid.y);
+                }
+            }
+        } else if (aForwardDot > bForwardDot) {
+            a.speed = Math.min(a.speed * 0.5, b.speed * 0.85);
+            if (a.collisionCooldown <= 0) {
+                a.boidCollisions++;
+                a.fitness -= 4.5;
+                a.collisionCooldown = 0.45;
+                if (city) city.crashHeat.add(a.x, a.y);
+            }
+        } else {
+            b.speed = Math.min(b.speed * 0.5, a.speed * 0.85);
+            if (b.collisionCooldown <= 0) {
+                b.boidCollisions++;
+                b.fitness -= 4.5;
+                b.collisionCooldown = 0.45;
+                if (city) city.crashHeat.add(b.x, b.y);
             }
         }
     }

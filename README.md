@@ -35,7 +35,10 @@
   - **Turbo (Skip Render)** mode decouples visualization from physics: each animation frame runs as many physics steps as fit in a `14 ms` time budget (instead of a fixed count) and renders the canvas only once per completed generation, so any physics speedup directly becomes training throughput.
 - **Signed Distance Field Road Queries**
   - On creation, each city precomputes a `2 px` grid of signed distances to the nearest road border (~160 KB, built in under 1 ms).
-  - On-road checks are a single bilinear lookup, and road-border sensor rays use sphere tracing over the field instead of fixed-step sampling, making road raycasts 2-3x faster and more accurate.
+  - On-road checks are a single bilinear lookup, and road-border sensor rays use sphere tracing over the field instead of fixed-step sampling, making road raycasts 2-3x faster and more accurate. Road rays return a plain distance, so sensor updates allocate nothing.
+- **Spatial Grid for Boid Neighbors**
+  - Every step, boids are bucketed into a `128 px` grid (counting sort into flat typed arrays). Sensors only test boids in nearby cells, and collisions only pair boids in the same or adjacent cells, making collision resolution 2-3.5x faster.
+  - The grid gives exactly the same sensor readings and collision pairs as checking every boid: a ray starting inside another boid always counts as distance `0`, and equal distances go to the lowest boid id, so results never depend on the order boids are checked in.
 - **Automatic Persistence (`localStorage`)**
   - Automatically saves the city map, generation counter, elite neural networks, and historical chart metrics after every generation.
   - Chart history keeps at most `500` points: when that is exceeded, every other point is removed (back to ~`250`), so the charts always show the complete run from generation 1 at a coarser resolution for older generations.
@@ -92,6 +95,7 @@ boid-boulevard/
     │   ├── RoadNode.js         # Intersection / waypoint node
     │   ├── Road.js             # Two-way road segment, lane geometry & AABB
     │   ├── HeatGrid.js         # Coarse grid for traffic & crash heatmaps
+    │   ├── SpatialGrid.js      # Per-step boid bucketing for fast neighbor queries
     │   ├── City.js             # City graph, road distance field (SDF) & road queries
     │   └── CityGenerator.js    # Procedural closed rectangular city generator
     ├── entities/

@@ -164,7 +164,9 @@ class Vector2D {
         const t2 = (-b + discriminant) / 2;
 
         if (t1 >= 0 && t1 <= maxDist) return t1;
-        if (t2 >= 0 && t2 <= maxDist) return 0;
+        // Ray origin inside the circle: distance 0, regardless of maxDist (keeps results independent
+        // of the order in which circles are tested)
+        if (t1 < 0 && t2 >= 0) return 0;
         return null;
     }
 }

@@ -11,6 +11,10 @@ class City {
     static HEAT_CELL_SIZE = 10;
     static HEAT_DECAY_PER_GENERATION = 0.5;
 
+    // Spatial grid cell size for boid neighbor queries (px); measured fastest for the ~140 px
+    // sensor query radius (smaller cells cost more in per-cell overhead than they save)
+    static BOID_GRID_CELL_SIZE = 128;
+
     /**
      * @param {number} width
      * @param {number} height
@@ -32,6 +36,9 @@ class City {
         // Heatmaps of where boids drive (seconds spent per cell) and where they crash
         this.trafficHeat = new HeatGrid(width, height, City.HEAT_CELL_SIZE);
         this.crashHeat = new HeatGrid(width, height, City.HEAT_CELL_SIZE);
+
+        // Per-step bucketing of boids for fast neighbor queries (see Boid.stepAll)
+        this.boidGrid = new SpatialGrid(width, height, City.BOID_GRID_CELL_SIZE);
     }
 
     /**
@@ -136,7 +143,8 @@ class City {
      * Raycasts from (ox, oy) along unit vector (dx, dy) up to maxDist to find the road border.
      * Sphere-traces the signed distance field: inside the road, |distance| never exceeds the true
      * distance to the border, so each step can safely advance by it without skipping past an edge.
-     * Returns { hit: boolean, distance: number, x: number, y: number }.
+     * Returns the distance to the border, or exactly maxDist when no border is hit
+     * (a hit is always < maxDist). Returns a plain number so sensor updates allocate nothing.
      */
     raycastRoadSide(ox, oy, dx, dy, maxDist) {
         const hitEpsilon = 0.4;
@@ -146,22 +154,12 @@ class City {
         for (let i = 0; i < 48 && t < maxDist; i++) {
             const dist = this.sampleRoadDistance(ox + dx * t, oy + dy * t);
             if (dist > -hitEpsilon) {
-                return {
-                    hit: true,
-                    distance: t,
-                    x: ox + dx * t,
-                    y: oy + dy * t
-                };
+                return t;
             }
             t += Math.max(-dist, minStep);
         }
 
-        return {
-            hit: false,
-            distance: maxDist,
-            x: ox + dx * maxDist,
-            y: oy + dy * maxDist
-        };
+        return maxDist;
     }
 
     /**
