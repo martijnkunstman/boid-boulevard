@@ -1,14 +1,15 @@
 /**
- * NeuralNetwork - Feedforward Multi-Layer Perceptron for Boid control.
+ * NeuralNetwork - Streamlined Feedforward Multi-Layer Perceptron for Boid control.
+ * Default architecture: [17, 10, 2] (single compact hidden layer for fast neuroevolution convergence).
  * Outputs:
  *   output[0]: Steering in [-1, 1] (left to right)
  *   output[1]: Throttle in [-1, 1] (positive = forward acceleration, negative = backward braking/reverse)
  */
 class NeuralNetwork {
     /**
-     * @param {number[]} layerSizes - Array of neuron counts per layer, e.g. [17, 14, 8, 2]
+     * @param {number[]} layerSizes - Array of neuron counts per layer, default [17, 10, 2]
      */
-    constructor(layerSizes = [17, 14, 8, 2]) {
+    constructor(layerSizes = [17, 10, 2]) {
         this.layerSizes = [...layerSizes];
         this.weights = [];
         this.biases = [];
@@ -105,44 +106,45 @@ class NeuralNetwork {
         const lastB = this.biases[this.biases.length - 1];
         if (lastW.length >= 2 && lastW[0].length >= 4) {
             // Output 0: Steering
-            lastW[0][0] += 1.25 * strength; // Turn right when left sensors / left lane error fire
-            lastW[0][1] -= 1.25 * strength; // Turn left when right sensors / right lane error fire
+            lastW[0][0] += 1.25 * strength;
+            lastW[0][1] -= 1.25 * strength;
 
             // Output 1: Throttle (forward > 0, braking < 0)
-            lastW[1][2] += 1.1 * strength;  // Base forward drive
-            lastW[1][3] -= 1.75 * strength; // Brake when boid/red light/wall in front
+            lastW[1][2] += 1.1 * strength;
+            lastW[1][3] -= 1.75 * strength;
             lastB[1] += 0.35 * strength;
         }
     }
 
     /**
-     * Compute network forward pass.
+     * Compute network forward pass using pre-allocated activation buffers (zero GC).
      * @param {number[]} inputs
      * @returns {number[]} [steering, throttle]
      */
     forward(inputs) {
-        let current = inputs.slice(0, this.layerSizes[0]);
-        while (current.length < this.layerSizes[0]) {
-            current.push(0);
+        const inLayer = this.lastActivations[0];
+        const inLen = inLayer.length;
+        for (let i = 0; i < inLen; i++) {
+            inLayer[i] = inputs[i] || 0;
         }
-        this.lastActivations[0] = current;
 
+        let current = inLayer;
         for (let l = 0; l < this.weights.length; l++) {
             const layerWeights = this.weights[l];
             const layerBiases = this.biases[l];
-            const next = new Array(layerWeights.length);
+            const next = this.lastActivations[l + 1];
+            const outLen = layerWeights.length;
+            const curLen = current.length;
 
-            for (let j = 0; j < layerWeights.length; j++) {
+            for (let j = 0; j < outLen; j++) {
                 let sum = layerBiases[j];
                 const row = layerWeights[j];
-                for (let i = 0; i < current.length; i++) {
+                for (let i = 0; i < curLen; i++) {
                     sum += row[i] * current[i];
                 }
                 next[j] = Math.tanh(sum);
             }
-
             current = next;
-            this.lastActivations[l + 1] = current;
         }
 
         return current;
@@ -199,7 +201,7 @@ class NeuralNetwork {
                 for (let i = 0; i < this.weights[l][j].length; i++) {
                     if (Random.next() < rate) {
                         this.weights[l][j][i] += NeuralNetwork.gaussianRandom() * amount;
-                        this.weights[l][j][i] = Math.max(-3.5, Math.min(3.5, this.weights[l][j][i]));
+                        this.weights[l][j][i] = Math.max(-3.5, Math.min(3.5, this.weights[l][j]));
                     }
                 }
             }

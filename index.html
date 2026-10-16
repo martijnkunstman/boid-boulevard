@@ -14,7 +14,7 @@
         </div>
         <div class="stats-bar">
             <span>Gen: <strong id="stat-gen">1</strong></span>
-            <span>Timer: <strong id="stat-timer">0.0s / 18s</strong></span>
+            <span>Timer: <strong id="stat-timer">0.0s / 30s</strong></span>
             <span>Boids: <strong id="stat-boids">55</strong></span>
             <span>Current Best Fitness: <strong id="stat-best-fit">0.0</strong></span>
             <span>All-Time Best: <strong id="stat-alltime-fit">0.0</strong></span>
@@ -43,6 +43,30 @@
                     <option value="2">2x</option>
                     <option value="4">4x</option>
                     <option value="8">8x</option>
+                    <option value="16">16x</option>
+                    <option value="32">32x</option>
+                    <option value="64">64x</option>
+                </select>
+            </label>
+            <label title="Skip canvas rendering between generations for maximum training throughput">
+                <input type="checkbox" id="chk-turbo"> Turbo (Skip Render)
+            </label>
+            <label>
+                Run Duration:
+                <select id="select-gen-duration">
+                    <option value="15">15s</option>
+                    <option value="30" selected>30s</option>
+                    <option value="45">45s</option>
+                    <option value="60">60s</option>
+                </select>
+            </label>
+            <label>
+                Boid Types:
+                <select id="select-boid-types">
+                    <option value="1">1 Type (Sedan)</option>
+                    <option value="2" selected>2 Types (Sedan + Compact)</option>
+                    <option value="3">3 Types (+ Sports)</option>
+                    <option value="4">4 Types (All)</option>
                 </select>
             </label>
             <label>
@@ -68,10 +92,10 @@
         <div class="canvas-wrapper">
             <canvas id="sim-canvas" width="1020" height="620"></canvas>
             <div class="legend-bar">
-                <span><i class="legend-dot" style="background:#2563eb;"></i>Compact Boid</span>
-                <span><i class="legend-dot" style="background:#059669;"></i>Sedan Boid</span>
-                <span><i class="legend-dot" style="background:#dc2626;"></i>Sports Boid</span>
-                <span><i class="legend-dot" style="background:#d97706;"></i>Heavy Boid</span>
+                <span><i class="legend-dot" style="background:#059669;"></i>1: Sedan Boid</span>
+                <span><i class="legend-dot" style="background:#2563eb;"></i>2: Compact Boid</span>
+                <span><i class="legend-dot" style="background:#dc2626;"></i>3: Sports Boid</span>
+                <span><i class="legend-dot" style="background:#d97706;"></i>4: Heavy Boid</span>
                 <span><strong>Sensors:</strong> Green=Clear, Amber=Road Border, Red=Boid Ahead</span>
             </div>
         </div>
@@ -82,7 +106,7 @@
         <h2>Debug Screen (Live Neural Network, Front Sensors, Telemetry &amp; LocalStorage)</h2>
         <div class="debug-layout">
             <div class="nn-panel">
-                <h3>Neural Network [17 Inputs &rarr; 14 &rarr; 8 &rarr; 2 Outputs (Steer, Throttle/Brake)]</h3>
+                <h3>Neural Network [17 Inputs &rarr; 10 Hidden &rarr; 2 Outputs (Steer, Throttle/Brake)]</h3>
                 <canvas id="nn-canvas" width="440" height="310"></canvas>
             </div>
             <div id="debug-telemetry"></div>

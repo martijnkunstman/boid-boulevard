@@ -29,6 +29,12 @@ class Road {
             ? new Vector2D(dx / this.length, dy / this.length)
             : new Vector2D(1, 0);
 
+        const pad = this.halfWidth + 1;
+        this.minX = Math.min(this.nodeA.x, this.nodeB.x) - pad;
+        this.maxX = Math.max(this.nodeA.x, this.nodeB.x) + pad;
+        this.minY = Math.min(this.nodeA.y, this.nodeB.y) - pad;
+        this.maxY = Math.max(this.nodeA.y, this.nodeB.y) + pad;
+
         const angleDeg = Math.abs((Math.atan2(dy, dx) * 180) / Math.PI) % 90;
         if (angleDeg > 14 && angleDeg < 76) {
             this.isDiagonal = true;

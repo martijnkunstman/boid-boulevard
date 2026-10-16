@@ -1,43 +1,43 @@
 /**
  * Boid - Autonomous vehicle agent controlled by a NeuralNetwork and front Sensors.
- * Features varied speeds/archetype properties, bidirectional throttle (forward drive & backward braking),
+ * Supports 1 to 4 configurable vehicle archetypes, bidirectional throttle (forward drive & backward braking),
  * and non-collapsing collision physics on a unified single-track road network.
  */
 class Boid {
     static ARCHETYPES = [
         {
-            name: 'Compact',
-            color: '#2563eb',
-            length: 13,
-            width: 7,
-            maxSpeedRange: [78, 96],
-            accelRange: [68, 84],
-            brakeRange: [115, 135],
-            turnRateRange: [3.2, 3.8],
-            mass: 0.85,
-            sensorRange: 98
-        },
-        {
             name: 'Sedan',
             color: '#059669',
             length: 15,
             width: 7.8,
-            maxSpeedRange: [92, 114],
-            accelRange: [72, 90],
-            brakeRange: [110, 130],
-            turnRateRange: [2.7, 3.2],
+            maxSpeedRange: [94, 110],
+            accelRange: [76, 88],
+            brakeRange: [115, 130],
+            turnRateRange: [2.8, 3.2],
             mass: 1.0,
             sensorRange: 108
+        },
+        {
+            name: 'Compact',
+            color: '#2563eb',
+            length: 13,
+            width: 7,
+            maxSpeedRange: [80, 95],
+            accelRange: [70, 84],
+            brakeRange: [118, 135],
+            turnRateRange: [3.2, 3.7],
+            mass: 0.85,
+            sensorRange: 98
         },
         {
             name: 'Sports',
             color: '#dc2626',
             length: 15.5,
             width: 8,
-            maxSpeedRange: [116, 142],
-            accelRange: [95, 118],
+            maxSpeedRange: [116, 138],
+            accelRange: [95, 115],
             brakeRange: [125, 150],
-            turnRateRange: [2.5, 3.0],
+            turnRateRange: [2.6, 3.0],
             mass: 0.95,
             sensorRange: 120
         },
@@ -46,10 +46,10 @@ class Boid {
             color: '#d97706',
             length: 18.5,
             width: 9,
-            maxSpeedRange: [66, 82],
-            accelRange: [52, 66],
+            maxSpeedRange: [68, 82],
+            accelRange: [54, 66],
             brakeRange: [95, 115],
-            turnRateRange: [2.1, 2.5],
+            turnRateRange: [2.2, 2.5],
             mass: 1.65,
             sensorRange: 115
         }
@@ -59,7 +59,7 @@ class Boid {
      * @param {number} id
      * @param {object} pose - { x, y, heading, road }
      * @param {NeuralNetwork|null} brain
-     * @param {object|null} properties
+     * @param {object|null} properties - { archetype, allowedTypesCount, ... }
      */
     constructor(id, pose, brain = null, properties = null) {
         this.id = id;
@@ -68,10 +68,16 @@ class Boid {
         this.heading = pose.heading || 0;
         this.currentRoad = pose.road || null;
 
-        // Assign vehicle archetype and varied physical properties
-        const arch = properties?.archetype
-            ? Boid.ARCHETYPES.find(a => a.name === properties.archetype) || Boid.ARCHETYPES[1]
-            : Boid.ARCHETYPES[Math.floor(Random.next() * Boid.ARCHETYPES.length)];
+        const maxTypes = Math.max(1, Math.min(4, properties?.allowedTypesCount || 4));
+        const activePool = Boid.ARCHETYPES.slice(0, maxTypes);
+
+        let arch = null;
+        if (properties?.archetype) {
+            arch = activePool.find(a => a.name === properties.archetype) || null;
+        }
+        if (!arch) {
+            arch = activePool[Math.floor(Random.next() * activePool.length)];
+        }
 
         this.archetype = arch.name;
         this.color = arch.color;
@@ -94,12 +100,12 @@ class Boid {
         this.plannedNextRoad = null;
         this.lastIntersectionNode = null;
 
-        // Front sensor array & Neural Network
+        // Front sensor array & streamlined [17, 10, 2] Neural Network
         this.sensor = new Sensor(this, 7, this.sensorRange);
         if (brain) {
             this.brain = brain.clone();
         } else {
-            this.brain = new NeuralNetwork([17, 14, 8, 2]);
+            this.brain = new NeuralNetwork([17, 10, 2]);
             this.brain.applyInitialReflexBias(0.35 + Random.next() * 0.35);
         }
 
@@ -145,18 +151,18 @@ class Boid {
         // 2. Update front raycast sensors (road borders and boids in front)
         this.sensor.update(city, allBoids);
 
-        // 3. Build 17-element neural network input vector
+        // 3. Populate 17-element neural network input vector in-place (zero allocation)
         const normSpeed = Math.max(-1, Math.min(1, this.speed / this.maxSpeed));
         const effectiveHeadingError = this._computeGuidedHeadingError(roadState);
 
-        const inputs = [
-            ...this.sensor.roadReadings,     // 0..6: 7 road-border sensor rays
-            ...this.sensor.boidReadings,     // 7..13: 7 boids-in-front sensor rays
-            this.sensor.closingSpeedReading, // 14: closing velocity with boid in front
-            normSpeed,                       // 15: current normalized speed
-            effectiveHeadingError            // 16: road/turn heading alignment error
-        ];
-        this.lastInputs = inputs;
+        const inputs = this.lastInputs;
+        for (let i = 0; i < 7; i++) {
+            inputs[i] = this.sensor.roadReadings[i];
+            inputs[i + 7] = this.sensor.boidReadings[i];
+        }
+        inputs[14] = this.sensor.closingSpeedReading;
+        inputs[15] = normSpeed;
+        inputs[16] = effectiveHeadingError;
 
         // 4. Run Neural Network forward pass -> [steering, throttle]
         const outputs = this.brain.forward(inputs);

@@ -19,7 +19,8 @@ class Simulation {
 
         this.trainer = new Trainer({
             populationSize: 55,
-            generationDuration: 18.0,
+            boidTypesCount: 2,
+            generationDuration: 30.0,
             mutationRate: 0.14,
             mutationStrength: 0.24
         });
@@ -30,12 +31,14 @@ class Simulation {
 
         this.isPaused = false;
         this.simSpeed = 1;
+        this.turboMode = false;
         this.lastFrameTime = performance.now();
         this.uiRefreshAccumulator = 0;
 
         this._initFromStorageOrRandom();
         this._bindEvents();
         this._updateHeaderStats();
+        this.renderer.render(this.city, this.boids, this.getInspectedBoid());
         this.debugScreen.render(this.getInspectedBoid(), this.city, this.trainer, this.boids);
         this.chartScreen.render(this.trainer, this.boids);
 
@@ -59,15 +62,27 @@ class Simulation {
             this.city = CityGenerator.generate(this.simCanvas.width, this.simCanvas.height, initialSeed);
         }
 
-        this._syncSeedInputUI(this.city.seed);
+        this._syncControlsFromState();
         this.boids = this.trainer.createInitialPopulation(this.city);
         StorageManager.saveProgress(this.trainer, this.city);
     }
 
-    _syncSeedInputUI(seed) {
+    _syncControlsFromState() {
         const seedInput = document.getElementById('input-seed');
-        if (seedInput) {
-            seedInput.value = String(seed ?? Random.currentSeed);
+        if (seedInput && this.city) {
+            seedInput.value = String(this.city.seed ?? Random.currentSeed);
+        }
+        const popInput = document.getElementById('input-pop-size');
+        if (popInput) {
+            popInput.value = this.trainer.populationSize;
+        }
+        const selectTypes = document.getElementById('select-boid-types');
+        if (selectTypes) {
+            selectTypes.value = String(this.trainer.boidTypesCount);
+        }
+        const selectDuration = document.getElementById('select-gen-duration');
+        if (selectDuration) {
+            selectDuration.value = String(Math.round(this.trainer.generationDuration));
         }
     }
 
@@ -77,7 +92,7 @@ class Simulation {
     applyCustomSeed(seedValue) {
         const cleanSeed = String(seedValue ?? '').trim() || Random.generateSeedString();
         this.city = CityGenerator.generate(this.simCanvas.width, this.simCanvas.height, cleanSeed);
-        this._syncSeedInputUI(this.city.seed);
+        this._syncControlsFromState();
         this.boids = this.trainer.createInitialPopulation(this.city);
         this.selectedBoid = null;
         StorageManager.saveProgress(this.trainer, this.city);
@@ -93,17 +108,22 @@ class Simulation {
         StorageManager.clearProgress();
         const popInput = document.getElementById('input-pop-size');
         const popSize = popInput ? parseInt(popInput.value, 10) || 55 : 55;
+        const selectTypes = document.getElementById('select-boid-types');
+        const typesCount = selectTypes ? parseInt(selectTypes.value, 10) || 2 : 2;
+        const selectDuration = document.getElementById('select-gen-duration');
+        const genDuration = selectDuration ? parseInt(selectDuration.value, 10) || 30 : 30;
 
         this.trainer = new Trainer({
             populationSize: popSize,
-            generationDuration: 18.0,
+            boidTypesCount: typesCount,
+            generationDuration: genDuration,
             mutationRate: 0.14,
             mutationStrength: 0.24
         });
 
         const newSeed = Random.generateSeedString();
         this.city = CityGenerator.generate(this.simCanvas.width, this.simCanvas.height, newSeed);
-        this._syncSeedInputUI(this.city.seed);
+        this._syncControlsFromState();
         this.boids = this.trainer.createInitialPopulation(this.city);
         this.selectedBoid = null;
 
@@ -119,11 +139,12 @@ class Simulation {
     generateNewRandomCityKeepBrains() {
         const newSeed = Random.generateSeedString();
         this.city = CityGenerator.generate(this.simCanvas.width, this.simCanvas.height, newSeed);
-        this._syncSeedInputUI(this.city.seed);
+        this._syncControlsFromState();
         this.boids = this.trainer.createInitialPopulation(this.city);
         this.selectedBoid = null;
         StorageManager.saveProgress(this.trainer, this.city);
         this._updateHeaderStats();
+        this.renderer.render(this.city, this.boids, this.getInspectedBoid());
     }
 
     /**
@@ -134,6 +155,7 @@ class Simulation {
         this.selectedBoid = null;
         StorageManager.saveProgress(this.trainer, this.city);
         this._updateHeaderStats();
+        this.renderer.render(this.city, this.boids, this.getInspectedBoid());
         this.chartScreen.render(this.trainer, this.boids);
     }
 
@@ -192,11 +214,47 @@ class Simulation {
             });
         }
 
-        // Simulation Speed selector
+        // Simulation Speed selector (1x .. 64x)
         const selectSpeed = document.getElementById('select-speed');
         if (selectSpeed) {
             selectSpeed.addEventListener('change', e => {
                 this.simSpeed = parseInt(e.target.value, 10) || 1;
+            });
+        }
+
+        // Turbo (Decoupled Render) checkbox
+        const chkTurbo = document.getElementById('chk-turbo');
+        if (chkTurbo) {
+            this.turboMode = chkTurbo.checked;
+            chkTurbo.addEventListener('change', () => {
+                this.turboMode = chkTurbo.checked;
+                if (!this.turboMode) {
+                    this.renderer.render(this.city, this.boids, this.getInspectedBoid());
+                }
+            });
+        }
+
+        // Generation Duration selector (15s, 30s, 45s, 60s)
+        const selectDuration = document.getElementById('select-gen-duration');
+        if (selectDuration) {
+            selectDuration.addEventListener('change', e => {
+                this.trainer.generationDuration = parseInt(e.target.value, 10) || 30;
+                StorageManager.saveProgress(this.trainer, this.city);
+                this._updateHeaderStats();
+            });
+        }
+
+        // Boid Types Count selector (1 to 4 types)
+        const selectBoidTypes = document.getElementById('select-boid-types');
+        if (selectBoidTypes) {
+            selectBoidTypes.addEventListener('change', e => {
+                const count = Math.max(1, Math.min(4, parseInt(e.target.value, 10) || 2));
+                this.trainer.boidTypesCount = count;
+                this.boids = this.trainer.createInitialPopulation(this.city);
+                this.selectedBoid = null;
+                StorageManager.saveProgress(this.trainer, this.city);
+                this.renderer.render(this.city, this.boids, this.getInspectedBoid());
+                this.debugScreen.render(this.getInspectedBoid(), this.city, this.trainer, this.boids);
             });
         }
 
@@ -252,6 +310,7 @@ class Simulation {
                 }
             }
             this.selectedBoid = closest;
+            this.renderer.render(this.city, this.boids, this.getInspectedBoid());
             this.debugScreen.render(this.getInspectedBoid(), this.city, this.trainer, this.boids);
         });
     }
@@ -280,7 +339,6 @@ class Simulation {
             secCharts.classList.remove('hidden');
         }
 
-        // Refresh debug & charts immediately when switching screens
         this.debugScreen.render(this.getInspectedBoid(), this.city, this.trainer, this.boids);
         this.chartScreen.render(this.trainer, this.boids);
     }
@@ -289,20 +347,30 @@ class Simulation {
         const rawDt = Math.min(0.05, (timestamp - this.lastFrameTime) / 1000);
         this.lastFrameTime = timestamp;
 
+        let genCompletedThisFrame = false;
+
         if (!this.isPaused) {
             const fixedStep = 1 / 60;
-            const steps = this.simSpeed;
+            // In Turbo mode, run at least 48 steps per frame (or simSpeed if higher)
+            const steps = this.turboMode ? Math.max(48, this.simSpeed) : this.simSpeed;
 
             for (let s = 0; s < steps; s++) {
-                this._stepSimulation(fixedStep);
+                if (this._stepSimulation(fixedStep)) {
+                    genCompletedThisFrame = true;
+                }
             }
         }
 
         const inspected = this.getInspectedBoid();
-        this.renderer.render(this.city, this.boids, inspected);
+
+        // Decoupled rendering: in Turbo mode, skip per-frame canvas rendering unless a generation just completed
+        if (!this.turboMode || genCompletedThisFrame || this.isPaused) {
+            this.renderer.render(this.city, this.boids, inspected);
+        }
 
         this.uiRefreshAccumulator += rawDt;
-        if (this.uiRefreshAccumulator >= 0.2) {
+        const refreshInterval = this.turboMode ? 0.45 : 0.2;
+        if (this.uiRefreshAccumulator >= refreshInterval || genCompletedThisFrame) {
             this.uiRefreshAccumulator = 0;
             this._updateHeaderStats();
             this.debugScreen.render(inspected, this.city, this.trainer, this.boids);
@@ -312,6 +380,9 @@ class Simulation {
         requestAnimationFrame(ts => this._loop(ts));
     }
 
+    /**
+     * Advances physics by dt and returns true if a generation completed on this step.
+     */
     _stepSimulation(dt) {
         this.city.update(dt);
 
@@ -327,8 +398,9 @@ class Simulation {
             this.boids = this.trainer.evolveNextGeneration(this.boids, this.city);
             this.selectedBoid = null;
             StorageManager.saveProgress(this.trainer, this.city);
-            this.chartScreen.render(this.trainer, this.boids);
+            return true;
         }
+        return false;
     }
 
     _updateHeaderStats() {

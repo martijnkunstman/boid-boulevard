@@ -8,7 +8,8 @@ class Trainer {
      */
     constructor(config = {}) {
         this.populationSize = config.populationSize || 55;
-        this.generationDuration = config.generationDuration || 18.0;
+        this.boidTypesCount = config.boidTypesCount || 2;
+        this.generationDuration = config.generationDuration || 30.0;
         this.mutationRate = config.mutationRate || 0.14;
         this.mutationStrength = config.mutationStrength || 0.24;
 
@@ -16,6 +17,7 @@ class Trainer {
         this.generationTimer = 0;
         this.allTimeBestFitness = -Infinity;
         this.allTimeBestBrain = null;
+        this.allTimeBestArchetype = 'Sedan';
         this.eliteBrains = [];
         this.history = [];
     }
@@ -29,6 +31,7 @@ class Trainer {
     createInitialPopulation(city) {
         const boids = [];
         const hasElites = this.eliteBrains && this.eliteBrains.length > 0;
+        const activeTypes = Boid.ARCHETYPES.slice(0, Math.max(1, Math.min(4, this.boidTypesCount)));
 
         for (let i = 0; i < this.populationSize; i++) {
             const pose = city.getRandomSpawnPose(boids);
@@ -42,8 +45,17 @@ class Trainer {
                 }
             }
 
-            const boid = new Boid(i + 1, pose, brain);
+            const chosenArch = activeTypes[i % activeTypes.length].name;
+            const boid = new Boid(i + 1, pose, brain, {
+                allowedTypesCount: this.boidTypesCount,
+                archetype: chosenArch
+            });
             boids.push(boid);
+        }
+
+        // Prime initial sensor rays so they are immediately ready for rendering
+        for (let i = 0; i < boids.length; i++) {
+            boids[i].sensor.update(city, boids);
         }
 
         return boids;
@@ -81,9 +93,11 @@ class Trainer {
         if (bestBoid && bestFitness > this.allTimeBestFitness) {
             this.allTimeBestFitness = bestFitness;
             this.allTimeBestBrain = bestBoid.brain.clone();
+            this.allTimeBestArchetype = bestBoid.archetype;
         } else if (!this.allTimeBestBrain && bestBoid) {
             this.allTimeBestFitness = bestFitness;
             this.allTimeBestBrain = bestBoid.brain.clone();
+            this.allTimeBestArchetype = bestBoid.archetype;
         }
 
         // Record history entry for Progress Charts
@@ -104,32 +118,50 @@ class Trainer {
             this.eliteBrains[0] = this.allTimeBestBrain.clone();
         }
 
+        const activeTypes = Boid.ARCHETYPES.slice(0, Math.max(1, Math.min(4, this.boidTypesCount)));
+
         // Breed next generation
         const nextBoids = [];
         for (let i = 0; i < this.populationSize; i++) {
             const pose = city.getRandomSpawnPose(nextBoids);
             let childBrain = null;
+            let childArchetype = activeTypes[i % activeTypes.length].name;
 
             if (i === 0 && this.allTimeBestBrain) {
                 // Slot 0: All-time champion brain untouched
                 childBrain = this.allTimeBestBrain.clone();
+                childArchetype = this.allTimeBestArchetype;
             } else if (i < eliteCount && this.eliteBrains[i]) {
-                // Elites preserved untouched
+                // Elites preserved untouched with their matching archetype
                 childBrain = this.eliteBrains[i].clone();
-            } else if (i < this.populationSize - 4) {
+                childArchetype = sorted[i] ? sorted[i].archetype : childArchetype;
+            } else if (i < this.populationSize - 6) {
                 // Tournament selection + crossover + mutation
                 const parentA = this._tournamentSelect(sorted, 4);
                 const parentB = this._tournamentSelect(sorted, 4);
                 childBrain = parentA.brain.crossover(parentB.brain);
                 childBrain.mutate(this.mutationRate, this.mutationStrength);
+                if (Random.next() < 0.85) {
+                    childArchetype = parentA.archetype;
+                }
             } else {
-                // Fine-tuned mutation of the best brain
-                childBrain = (this.allTimeBestBrain || sorted[0].brain).clone();
-                childBrain.mutate(this.mutationRate * 0.6, this.mutationStrength * 0.5);
+                // Fine-tuned small mutation of the best brains for local refinement
+                const templateParent = sorted[i % Math.min(3, sorted.length)];
+                childBrain = (templateParent ? templateParent.brain : this.allTimeBestBrain).clone();
+                childBrain.mutate(this.mutationRate * 0.55, this.mutationStrength * 0.45);
+                if (templateParent) childArchetype = templateParent.archetype;
             }
 
-            const boid = new Boid(i + 1, pose, childBrain);
+            const boid = new Boid(i + 1, pose, childBrain, {
+                allowedTypesCount: this.boidTypesCount,
+                archetype: childArchetype
+            });
             nextBoids.push(boid);
+        }
+
+        // Prime initial sensor rays
+        for (let i = 0; i < nextBoids.length; i++) {
+            nextBoids[i].sensor.update(city, nextBoids);
         }
 
         this.generation++;
@@ -170,13 +202,15 @@ class Trainer {
         return {
             generation: this.generation,
             populationSize: this.populationSize,
+            boidTypesCount: this.boidTypesCount,
             generationDuration: this.generationDuration,
             mutationRate: this.mutationRate,
             mutationStrength: this.mutationStrength,
             allTimeBestFitness: this.allTimeBestFitness,
+            allTimeBestArchetype: this.allTimeBestArchetype,
             allTimeBestBrain: this.allTimeBestBrain ? this.allTimeBestBrain.serialize() : null,
             eliteBrains: this.eliteBrains.map(b => b.serialize()),
-            history: this.history.slice(-150) // Keep up to 150 generations in storage
+            history: this.history.slice(-150)
         };
     }
 
@@ -184,10 +218,12 @@ class Trainer {
         if (!data) return;
         this.generation = data.generation || 1;
         this.populationSize = data.populationSize || this.populationSize;
+        this.boidTypesCount = data.boidTypesCount || this.boidTypesCount;
         this.generationDuration = data.generationDuration || this.generationDuration;
         this.mutationRate = data.mutationRate ?? this.mutationRate;
         this.mutationStrength = data.mutationStrength ?? this.mutationStrength;
         this.allTimeBestFitness = data.allTimeBestFitness ?? -Infinity;
+        this.allTimeBestArchetype = data.allTimeBestArchetype || 'Sedan';
         this.allTimeBestBrain = data.allTimeBestBrain
             ? NeuralNetwork.deserialize(data.allTimeBestBrain)
             : null;

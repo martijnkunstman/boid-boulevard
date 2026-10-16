@@ -41,9 +41,12 @@ class City {
             }
         }
 
-        // Check road segments
+        // Check road segments with fast bounding-box rejection
         for (let i = 0; i < this.roads.length; i++) {
             const road = this.roads[i];
+            if (px < road.minX || px > road.maxX || py < road.minY || py > road.maxY) {
+                continue;
+            }
             const proj = Vector2D.closestPointOnSegment(
                 px, py,
                 road.nodeA.x, road.nodeA.y,

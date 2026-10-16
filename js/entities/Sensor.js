@@ -18,18 +18,31 @@ class Sensor {
         this.spreadAngle = spreadAngle;
 
         this.rayAngles = [];
+        // Pre-allocate ray objects for zero-GC updates during high-speed training
+        this.rays = [];
         for (let i = 0; i < this.rayCount; i++) {
             const frac = this.rayCount === 1 ? 0.5 : i / (this.rayCount - 1);
             this.rayAngles.push((frac - 0.5) * this.spreadAngle);
+            this.rays.push({
+                ox: 0,
+                oy: 0,
+                endX: 0,
+                endY: 0,
+                roadHitX: 0,
+                roadHitY: 0,
+                roadHit: false,
+                roadReading: 0,
+                boidHitX: 0,
+                boidHitY: 0,
+                boidHit: false,
+                boidReading: 0
+            });
         }
 
         // Readings in [0, 1] where 0 = clear/far, 1 = immediate proximity
         this.roadReadings = new Array(this.rayCount).fill(0);
         this.boidReadings = new Array(this.rayCount).fill(0);
         this.closingSpeedReading = 0;
-
-        // Ray geometry for visualization
-        this.rays = [];
     }
 
     /**
@@ -42,7 +55,6 @@ class Sensor {
         const ox = this.boid.x + Math.cos(this.boid.heading) * frontOffset;
         const oy = this.boid.y + Math.sin(this.boid.heading) * frontOffset;
 
-        this.rays = [];
         let maxClosingSpeed = 0;
 
         // Pre-filter nearby boids
@@ -69,9 +81,10 @@ class Sensor {
 
             // 1. Sense road border
             const roadHit = city.raycastRoadSide(ox, oy, dx, dy, this.rayLength);
-            this.roadReadings[i] = roadHit.hit
+            const roadReading = roadHit.hit
                 ? Math.max(0, Math.min(1, 1 - roadHit.distance / this.rayLength))
                 : 0;
+            this.roadReadings[i] = roadReading;
 
             // 2. Sense boids in front along this ray
             let closestBoidDist = this.rayLength;
@@ -92,8 +105,9 @@ class Sensor {
                 }
             }
 
+            let boidReading = 0;
             if (hitBoid) {
-                this.boidReadings[i] = Math.max(0, Math.min(1, 1 - closestBoidDist / this.rayLength));
+                boidReading = Math.max(0, Math.min(1, 1 - closestBoidDist / this.rayLength));
                 // If in central forward cone, compute relative closing velocity
                 if (Math.abs(relAngle) < 0.45) {
                     const otherVelAlongRay =
@@ -104,24 +118,22 @@ class Sensor {
                         maxClosingSpeed = closing;
                     }
                 }
-            } else {
-                this.boidReadings[i] = 0;
             }
+            this.boidReadings[i] = boidReading;
 
-            this.rays.push({
-                ox,
-                oy,
-                endX: ox + dx * this.rayLength,
-                endY: oy + dy * this.rayLength,
-                roadHitX: roadHit.x,
-                roadHitY: roadHit.y,
-                roadHit: roadHit.hit,
-                roadReading: this.roadReadings[i],
-                boidHitX: ox + dx * closestBoidDist,
-                boidHitY: oy + dy * closestBoidDist,
-                boidHit: Boolean(hitBoid),
-                boidReading: this.boidReadings[i]
-            });
+            const rayObj = this.rays[i];
+            rayObj.ox = ox;
+            rayObj.oy = oy;
+            rayObj.endX = ox + dx * this.rayLength;
+            rayObj.endY = oy + dy * this.rayLength;
+            rayObj.roadHitX = roadHit.x;
+            rayObj.roadHitY = roadHit.y;
+            rayObj.roadHit = roadHit.hit;
+            rayObj.roadReading = roadReading;
+            rayObj.boidHitX = ox + dx * closestBoidDist;
+            rayObj.boidHitY = oy + dy * closestBoidDist;
+            rayObj.boidHit = Boolean(hitBoid);
+            rayObj.boidReading = boidReading;
         }
 
         this.closingSpeedReading = Math.max(-1, Math.min(1, maxClosingSpeed));
