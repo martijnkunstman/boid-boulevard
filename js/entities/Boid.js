@@ -105,12 +105,12 @@ class Boid {
         this.plannedNextRoad = null;
         this.lastIntersectionNode = null;
 
-        // Front sensor array & streamlined [17, 10, 2] Neural Network
+        // Front sensor array & Neural Network (layout: NeuralNetwork.DEFAULT_LAYOUT, 17 inputs -> 2 outputs)
         this.sensor = new Sensor(this, 7, this.sensorRange);
         if (brain) {
             this.brain = brain.clone();
         } else {
-            this.brain = new NeuralNetwork([17, 10, 2]);
+            this.brain = new NeuralNetwork(NeuralNetwork.DEFAULT_LAYOUT);
             this.brain.applyInitialReflexBias(0.35 + Random.next() * 0.35);
         }
 

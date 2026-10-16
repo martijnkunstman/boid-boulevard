@@ -239,13 +239,35 @@ class Trainer {
         this.mutationStrength = data.mutationStrength ?? this.mutationStrength;
         this.allTimeBestFitness = data.allTimeBestFitness ?? -Infinity;
         this.allTimeBestArchetype = data.allTimeBestArchetype || 'Sedan';
-        this.allTimeBestBrain = data.allTimeBestBrain
-            ? NeuralNetwork.deserialize(data.allTimeBestBrain)
-            : null;
-        this.eliteBrains = Array.isArray(data.eliteBrains)
-            ? data.eliteBrains.map(b => NeuralNetwork.deserialize(b))
-            : [];
         this.history = Array.isArray(data.history) ? data.history : [];
         this._compactHistory();
+
+        // Saved brains are only reused if they match the current network layout; brains from an
+        // older layout (or a corrupted save) are discarded so they can never be mixed with new ones
+        const layout = NeuralNetwork.DEFAULT_LAYOUT;
+        const loadBrain = saved => {
+            if (!saved) return null;
+            try {
+                const nn = NeuralNetwork.deserialize(saved);
+                return nn.hasLayout(layout) ? nn : null;
+            } catch (err) {
+                return null;
+            }
+        };
+
+        this.allTimeBestBrain = loadBrain(data.allTimeBestBrain);
+        if (!this.allTimeBestBrain) {
+            // The record belonged to a discarded brain, so start the all-time best over
+            this.allTimeBestFitness = -Infinity;
+            this.allTimeBestArchetype = 'Sedan';
+        }
+        const savedElites = Array.isArray(data.eliteBrains) ? data.eliteBrains : [];
+        this.eliteBrains = savedElites.map(loadBrain).filter(Boolean);
+
+        const discarded = savedElites.length - this.eliteBrains.length +
+            (data.allTimeBestBrain && !this.allTimeBestBrain ? 1 : 0);
+        if (discarded > 0) {
+            console.info(`Trainer: discarded ${discarded} saved brain(s) that do not match network layout [${layout.join(', ')}]`);
+        }
     }
 }

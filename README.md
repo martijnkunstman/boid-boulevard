@@ -12,14 +12,14 @@
   - **Two-way roads** (`53 px` wide) with a dashed centerline: traffic keeps right, each direction in its own lane.
 - **Deterministic Random Seed**
   - Uses a seeded Mulberry32 PRNG (`Random`) so entering the same seed reproduces the exact same city layout, spawn poses, and genetic mutations.
-- **Feedforward Neural Network (`[17 -> 10 -> 2]`)**
+- **Feedforward Neural Network (`[17 -> 12 -> 8 -> 2]`)**
   - **17 Inputs**:
     - `7` Front Road-Border Ray Sensors (`-75°`, `-50°`, `-25°`, `0°`, `+25°`, `+50°`, `+75°`)
     - `7` Front Boid-Detection Ray Sensors (same 7 angles)
     - `1` Closing Speed sensor toward the boid straight ahead (center ray only, so oncoming traffic in the other lane does not trigger it)
     - `1` Normalized Current Speed (`speed / maxSpeed`)
     - `1` Signed heading error toward a lookahead point in the boid's own (right-hand) lane, or into the correct lane of the next road when turning at a crossing
-  - **10 Hidden Neurons** (`tanh` activation)
+  - **Two Hidden Layers** of `12` and `8` neurons (`tanh` activation). In headless tests (3 seeds, trained from scratch) this layout overtook the earlier single `10`-neuron layer after ~300 generations (about 3% more distance, 6% higher fitness, 20% fewer collisions), but it learns more slowly during the first ~100 generations.
   - **2 Continuous Outputs** (`tanh` activation in `[-1, +1]`):
     1. **Steering Direction**: `-1` (full left) to `+1` (full right)
     2. **Bidirectional Throttle / Brake**: `> 0` accelerates forward; `< 0` brakes when moving forward or reverses from a stop
@@ -41,6 +41,7 @@
   - The grid gives exactly the same sensor readings and collision pairs as checking every boid: a ray starting inside another boid always counts as distance `0`, and equal distances go to the lowest boid id, so results never depend on the order boids are checked in.
 - **Automatic Persistence (`localStorage`)**
   - Automatically saves the city map, generation counter, elite neural networks, and historical chart metrics after every generation.
+  - Saved networks are only reused if they match the current network layout; networks from an older layout (or a corrupted save) are discarded on load, and training continues with fresh networks.
   - Chart history keeps at most `500` points: when that is exceeded, every other point is removed (back to ~`250`), so the charts always show the complete run from generation 1 at a coarser resolution for older generations.
   - Includes a **Restart & Clear Local Storage** button to wipe saved data and start fresh.
 - **Three Built-In Screens**

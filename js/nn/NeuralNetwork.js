@@ -1,15 +1,18 @@
 /**
- * NeuralNetwork - Streamlined Feedforward Multi-Layer Perceptron for Boid control.
- * Default architecture: [17, 10, 2] (single compact hidden layer for fast neuroevolution convergence).
+ * NeuralNetwork - Feedforward Multi-Layer Perceptron for Boid control.
+ * Default architecture: [17, 12, 8, 2] (two hidden layers; in headless tests it outperformed [17, 10, 2]
+ * after ~300 generations, while starting slower).
  * Outputs:
  *   output[0]: Steering in [-1, 1] (left to right)
  *   output[1]: Throttle in [-1, 1] (positive = forward acceleration, negative = backward braking/reverse)
  */
 class NeuralNetwork {
+    static DEFAULT_LAYOUT = [17, 12, 8, 2];
+
     /**
-     * @param {number[]} layerSizes - Array of neuron counts per layer, default [17, 10, 2]
+     * @param {number[]} layerSizes - Array of neuron counts per layer, default NeuralNetwork.DEFAULT_LAYOUT
      */
-    constructor(layerSizes = [17, 10, 2]) {
+    constructor(layerSizes = NeuralNetwork.DEFAULT_LAYOUT) {
         this.layerSizes = [...layerSizes];
         this.weights = [];
         this.biases = [];
@@ -150,6 +153,27 @@ class NeuralNetwork {
         return current;
     }
 
+    /**
+     * True if this network has exactly the given layer sizes, including matching weight and bias shapes
+     * (so a saved network from an older layout, or a corrupted save, is never mixed in).
+     * @param {number[]} layout
+     */
+    hasLayout(layout) {
+        if (this.layerSizes.length !== layout.length) return false;
+        for (let l = 0; l < layout.length; l++) {
+            if (this.layerSizes[l] !== layout[l]) return false;
+        }
+        if (this.weights.length !== layout.length - 1 || this.biases.length !== layout.length - 1) return false;
+        for (let l = 0; l < this.weights.length; l++) {
+            const rows = this.weights[l];
+            if (rows.length !== layout[l + 1] || this.biases[l].length !== layout[l + 1]) return false;
+            for (const row of rows) {
+                if (row.length !== layout[l]) return false;
+            }
+        }
+        return true;
+    }
+
     clone() {
         const copy = new NeuralNetwork(this.layerSizes);
         copy.weights = this.weights.map(layer => layer.map(row => [...row]));
@@ -163,6 +187,10 @@ class NeuralNetwork {
      * @returns {NeuralNetwork}
      */
     crossover(partner) {
+        // Networks with different layouts cannot be mixed weight-by-weight
+        if (!partner.hasLayout(this.layerSizes)) {
+            return this.clone();
+        }
         const child = this.clone();
         for (let l = 0; l < child.weights.length; l++) {
             for (let j = 0; j < child.weights[l].length; j++) {
