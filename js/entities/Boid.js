@@ -4,16 +4,6 @@
  * and non-collapsing collision physics on a two-way, keep-right road network.
  */
 class Boid {
-    // Right-of-way at crossings: evaluation zone beyond the crossing radius (px), how soon another boid
-    // must arrive to have priority (s), wait time before a deadlock may be broken (s), stop line
-    // distance beyond the crossing radius (px), and the fitness penalty for not yielding
-    static YIELD_ZONE = 110;
-    static YIELD_ETA = 2.0;
-    static YIELD_OVERRIDE_TIME = 2.5;
-    static YIELD_STOP_GAP = 12;
-    // (must exceed the distance reward lost by waiting, or evolution learns to ignore the rule)
-    static YIELD_VIOLATION_PENALTY = 80;
-
     static ARCHETYPES = [
         {
             name: 'Sedan',
@@ -115,14 +105,6 @@ class Boid {
         this.plannedNextRoad = null;
         this.lastIntersectionNode = null;
 
-        // Right-of-way state while approaching a crossing (see _updateRightOfWay)
-        this.mustYield = false;
-        this.yieldReason = '';
-        this.yieldNode = null;
-        this.yieldPoint = { x: 0, y: 0 };
-        this.yieldTimer = 0;
-        this.yieldOverride = false;
-
         // Front sensor array & streamlined [17, 10, 2] Neural Network
         this.sensor = new Sensor(this, 7, this.sensorRange);
         if (brain) {
@@ -139,7 +121,6 @@ class Boid {
         this.boidCollisions = 0;
         this.headOnCollisions = 0;
         this.wrongLaneTime = 0;
-        this.rightOfWayViolations = 0;
         this.timeAlive = 0;
         this.stuckTimer = 0;
         this.collisionCooldown = 0;
@@ -148,160 +129,6 @@ class Boid {
 
     static _randInRange([min, max]) {
         return min + Random.next() * (max - min);
-    }
-
-    /**
-     * Right-of-way ("priority to the right") at crossings with 3 or more roads.
-     * While approaching a crossing, this boid must yield to:
-     *   - any boid already on the crossing,
-     *   - boids approaching from its right that arrive within YIELD_ETA seconds,
-     *   - oncoming boids when it turns left itself (and they do not).
-     * When four boids block each other, the one that waited longest (> YIELD_OVERRIDE_TIME) may go.
-     * Driving past the stop line while required to yield is a violation and costs fitness.
-     */
-    _updateRightOfWay(dt, allBoids) {
-        const road = this.currentRoad;
-
-        // Violation: was required to yield at a node and is now entering it anyway
-        if (this.mustYield && this.yieldNode) {
-            const n = this.yieldNode;
-            const approaching = road && (this.travelSign > 0 ? road.nodeB : road.nodeA);
-            if (approaching !== n && Math.hypot(this.x - n.x, this.y - n.y) < n.radius + Boid.YIELD_STOP_GAP) {
-                this.rightOfWayViolations++;
-                this.fitness -= Boid.YIELD_VIOLATION_PENALTY;
-            }
-        }
-
-        let reason = '';
-        let node = null;
-        let fx = 0;
-        let fy = 0;
-
-        if (road) {
-            node = this.travelSign > 0 ? road.nodeB : road.nodeA;
-            const dist = Math.hypot(this.x - node.x, this.y - node.y);
-            const inZone = node.roads.length >= 3 &&
-                dist > node.radius + 10 &&
-                dist <= node.radius + Boid.YIELD_ZONE;
-
-            if (inZone) {
-                // Travel direction into the crossing, and the right-hand side when facing it
-                fx = road.dir.x * this.travelSign;
-                fy = road.dir.y * this.travelSign;
-                const rightX = -fy;
-                const rightY = fx;
-                const myTurn = Boid._turnSign(node, fx, fy, this.plannedNextRoad);
-
-                for (const other of allBoids) {
-                    if (other === this) continue;
-                    const odx = other.x - node.x;
-                    const ody = other.y - node.y;
-                    const otherDist = Math.hypot(odx, ody);
-                    if (otherDist > node.radius + Boid.YIELD_ZONE) continue;
-
-                    // Crossing occupied: wait until it is clear, except for boids leaving onto this
-                    // boid's own road (they drive away in the other lane)
-                    if (otherDist < node.radius + 2 && Math.abs(other.speed) > 3) {
-                        if (other.currentRoad !== road) {
-                            reason = 'crossing';
-                            break;
-                        }
-                        continue;
-                    }
-
-                    // Other boid approaching the same crossing via another road, arriving soon
-                    const oRoad = other.currentRoad;
-                    if (!oRoad || oRoad === road) continue;
-                    const oNode = other.travelSign > 0 ? oRoad.nodeB : oRoad.nodeA;
-                    if (oNode !== node) continue;
-                    const eta = (otherDist - node.radius) / Math.max(5, other.speed);
-                    if (eta > Boid.YIELD_ETA) continue;
-
-                    // Direction from the crossing out along the other boid's road
-                    const far = oRoad.getOtherNode(node);
-                    const outX = (far.x - node.x) / oRoad.length;
-                    const outY = (far.y - node.y) / oRoad.length;
-
-                    if (outX * rightX + outY * rightY > 0.35) {
-                        reason = 'right';
-                        break;
-                    }
-                    const isOncoming = outX * fx + outY * fy > 0.7;
-                    if (isOncoming && myTurn === -1) {
-                        const otherTurn = Boid._turnSign(
-                            node,
-                            oRoad.dir.x * other.travelSign,
-                            oRoad.dir.y * other.travelSign,
-                            other.plannedNextRoad
-                        );
-                        if (otherTurn !== -1) {
-                            reason = 'oncoming';
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        // A boid that can no longer stop before the stop line is committed and crosses
-        // (only checked when a yield would start, not while already yielding)
-        if (reason && !this.mustYield) {
-            const distToStop = Math.hypot(this.x - node.x, this.y - node.y) - node.radius - Boid.YIELD_STOP_GAP - this.length * 0.5;
-            const brakingDist = (this.speed * this.speed) / (2 * this.brakingForce);
-            if (brakingDist > distToStop) {
-                reason = '';
-            }
-        }
-
-        if (reason) {
-            this.yieldTimer += dt;
-            this.yieldOverride = reason !== 'crossing' &&
-                this.yieldTimer > Boid.YIELD_OVERRIDE_TIME &&
-                this._isLongestWaiterAt(node, allBoids);
-        } else {
-            this.yieldTimer = 0;
-            this.yieldOverride = false;
-        }
-
-        this.yieldReason = reason;
-        this.mustYield = Boolean(reason) && !this.yieldOverride;
-        this.yieldNode = reason ? node : null;
-
-        if (this.mustYield) {
-            // Stop line point in this boid's own lane, just before the crossing
-            const back = node.radius + Boid.YIELD_STOP_GAP;
-            this.yieldPoint.x = node.x - fx * back - fy * road.laneOffset;
-            this.yieldPoint.y = node.y - fy * back + fx * road.laneOffset;
-        }
-    }
-
-    /**
-     * Turn direction at node for a boid traveling (fx, fy) into it and leaving via plannedRoad:
-     * 1 = right, -1 = left, 0 = straight or unknown.
-     */
-    static _turnSign(node, fx, fy, plannedRoad) {
-        if (!plannedRoad) return 0;
-        const far = plannedRoad.getOtherNode(node);
-        const outX = (far.x - node.x) / plannedRoad.length;
-        const outY = (far.y - node.y) / plannedRoad.length;
-        const cross = fx * outY - fy * outX;
-        if (cross > 0.5) return 1;
-        if (cross < -0.5) return -1;
-        return 0;
-    }
-
-    /**
-     * Deadlock breaker: true if no other boid at this crossing has waited longer (ties go to the lower id)
-     * and nobody is already using an override there.
-     */
-    _isLongestWaiterAt(node, allBoids) {
-        for (const other of allBoids) {
-            if (other === this || other.yieldNode !== node) continue;
-            if (other.yieldOverride) return false;
-            if (other.yieldTimer > this.yieldTimer) return false;
-            if (other.yieldTimer === this.yieldTimer && other.id < this.id) return false;
-        }
-        return true;
     }
 
     /**
@@ -337,10 +164,7 @@ class Boid {
         this.currentRoad = roadState.road;
         this.travelSign = roadState.travelSign;
 
-        // 1b. Right-of-way at the crossing ahead (a yield shows up as an obstacle on the stop line)
-        this._updateRightOfWay(dt, allBoids);
-
-        // 2. Update front raycast sensors (road borders, boids and stop line in front)
+        // 2. Update front raycast sensors (road borders and boids in front)
         this.sensor.update(city, allBoids);
 
         // 3. Populate 17-element neural network input vector in-place (zero allocation)
@@ -459,8 +283,7 @@ class Boid {
         if (!node) return false;
 
         // 1. Choose a planned outgoing road when approaching an intersection
-        // (planned before entering the right-of-way zone, so the turn direction is known there)
-        if (roadState.distToNode < node.radius + Boid.YIELD_ZONE + 5 && !this.plannedNextRoad && this.lastIntersectionNode !== node) {
+        if (roadState.distToNode < node.radius + 42 && !this.plannedNextRoad && this.lastIntersectionNode !== node) {
             this.plannedNextRoad = this._pickOutgoingRoad(node, roadState.road);
         }
 
@@ -512,8 +335,7 @@ class Boid {
         }
 
         // Anti-collapse / anti-stall check: if stuck, respawn cleanly
-        // (waiting at a stop line to give right of way is not stalling)
-        if (Math.abs(this.speed) < 6 && !this.mustYield) {
+        if (Math.abs(this.speed) < 6) {
             this.stuckTimer += dt;
             this.fitness -= 1.2 * dt;
             if (this.stuckTimer > 3.6) {

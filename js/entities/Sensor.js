@@ -2,13 +2,9 @@
  * Sensor - Front-mounted raycast sensor array for a Boid.
  * Detects:
  *   1. Road borders (curbs & intersection edges)
- *   2. Boids in front, and the stop line when the boid must give right of way (on the same boid rays)
+ *   2. Boids in front
  */
 class Sensor {
-    // Virtual obstacle used for stop lines: stationary, sensed on the boid rays like a parked boid
-    static STOP_LINE_RADIUS = 11;
-    static STOP_LINE_OBSTACLE = { heading: 0, speed: 0 };
-
     /**
      * @param {Boid} boid
      * @param {number} rayCount
@@ -106,21 +102,6 @@ class Sensor {
                 if (dist !== null && dist < closestBoidDist) {
                     closestBoidDist = dist;
                     hitBoid = other;
-                }
-            }
-
-            // 3. A stop line the boid must yield at is sensed as a stationary obstacle
-            if (this.boid.mustYield) {
-                const yp = this.boid.yieldPoint;
-                const dist = Vector2D.rayCircleIntersection(
-                    ox, oy, dx, dy,
-                    yp.x, yp.y,
-                    Sensor.STOP_LINE_RADIUS,
-                    closestBoidDist
-                );
-                if (dist !== null && dist < closestBoidDist) {
-                    closestBoidDist = dist;
-                    hitBoid = Sensor.STOP_LINE_OBSTACLE;
                 }
             }
 

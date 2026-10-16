@@ -72,9 +72,6 @@ class SimulationRenderer {
             this._renderDistanceField(ctx, city);
         }
 
-        // 2c. Red stop lines where boids are giving right of way
-        this._renderYieldStopLines(ctx, boids);
-
         // 3. Render all boids
         for (const boid of boids) {
             this._renderBoid(ctx, boid, boid === inspectedBoid);
@@ -322,31 +319,6 @@ class SimulationRenderer {
             ctx.beginPath();
             ctx.moveTo(road.nodeA.x + road.dir.x * startGap, road.nodeA.y + road.dir.y * startGap);
             ctx.lineTo(road.nodeB.x - road.dir.x * endGap, road.nodeB.y - road.dir.y * endGap);
-            ctx.stroke();
-        }
-        ctx.restore();
-    }
-
-    /**
-     * Draws a short red bar across the lane at the stop line of every boid that must yield.
-     */
-    _renderYieldStopLines(ctx, boids) {
-        ctx.save();
-        ctx.strokeStyle = '#ef4444';
-        ctx.lineWidth = 3;
-        ctx.lineCap = 'round';
-
-        for (const boid of boids) {
-            if (!boid.mustYield || !boid.currentRoad) continue;
-            const road = boid.currentRoad;
-            // Right-hand normal of the travel direction spans the lane
-            const rx = -road.dir.y * boid.travelSign;
-            const ry = road.dir.x * boid.travelSign;
-            const half = road.laneOffset - 2;
-            const p = boid.yieldPoint;
-            ctx.beginPath();
-            ctx.moveTo(p.x - rx * half, p.y - ry * half);
-            ctx.lineTo(p.x + rx * half, p.y + ry * half);
             ctx.stroke();
         }
         ctx.restore();
