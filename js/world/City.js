@@ -26,22 +26,13 @@ class City {
 
     /**
      * Checks if point (px, py) is inside the drivable road boundaries.
+     * Road segments are round-capped capsules of radius road.halfWidth, so intersections
+     * are completely flush and smooth without sticking-out bulges.
      * @param {number} px
      * @param {number} py
      * @returns {boolean}
      */
     isPointOnRoad(px, py) {
-        // Check intersection nodes first
-        for (let i = 0; i < this.nodes.length; i++) {
-            const node = this.nodes[i];
-            const dx = px - node.x;
-            const dy = py - node.y;
-            if (dx * dx + dy * dy <= node.radius * node.radius) {
-                return true;
-            }
-        }
-
-        // Check road segments with fast bounding-box rejection
         for (let i = 0; i < this.roads.length; i++) {
             const road = this.roads[i];
             if (px < road.minX || px > road.maxX || py < road.minY || py > road.maxY) {
@@ -56,7 +47,6 @@ class City {
                 return true;
             }
         }
-
         return false;
     }
 
@@ -111,10 +101,28 @@ class City {
      * Analyzes a boid's position (x, y) and heading to determine its active road, centerline point,
      * and approaching crossing node.
      */
-    queryBoidRoadState(x, y, heading, currentRoad = null) {
+    queryBoidRoadState(x, y, heading, currentRoad = null, currentTravelSign = null) {
+        // If currentRoad is valid and the boid is within or near its capsule, keep currentRoad locked
+        // so intersections never oscillate back to the old incoming road.
+        if (currentRoad) {
+            const curProj = Vector2D.closestPointOnSegment(
+                x, y,
+                currentRoad.nodeA.x, currentRoad.nodeA.y,
+                currentRoad.nodeB.x, currentRoad.nodeB.y
+            );
+            if (curProj.dist <= currentRoad.halfWidth + 10) {
+                return this._buildRoadStateForProjection(
+                    x, y, heading, currentRoad, curProj, currentTravelSign
+                );
+            }
+        }
+
         let bestRoad = null;
         let bestProj = null;
         let bestScore = Infinity;
+
+        const hx = Math.cos(heading);
+        const hy = Math.sin(heading);
 
         for (let i = 0; i < this.roads.length; i++) {
             const road = this.roads[i];
@@ -124,25 +132,12 @@ class City {
                 road.nodeB.x, road.nodeB.y
             );
 
-            // Continuity bonus for currentRoad and alignment bonus when inside an intersection
             let score = proj.dist - road.halfWidth;
             if (road === currentRoad) {
-                score -= 5.0;
-            } else if (currentRoad) {
-                const sharesNode =
-                    road.nodeA === currentRoad.nodeA ||
-                    road.nodeA === currentRoad.nodeB ||
-                    road.nodeB === currentRoad.nodeA ||
-                    road.nodeB === currentRoad.nodeB;
-                if (!sharesNode && proj.dist > road.halfWidth) {
-                    score += 18.0;
-                }
+                score -= 10.0;
             }
-
-            const hx = Math.cos(heading);
-            const hy = Math.sin(heading);
             const align = Math.abs(hx * road.dir.x + hy * road.dir.y);
-            score -= align * 4.5;
+            score -= align * 4.0;
 
             if (score < bestScore) {
                 bestScore = score;
@@ -160,20 +155,38 @@ class City {
             );
         }
 
-        return this._buildRoadStateForProjection(x, y, heading, bestRoad, bestProj);
+        return this._buildRoadStateForProjection(x, y, heading, bestRoad, bestProj, null);
     }
 
-    _buildRoadStateForProjection(x, y, heading, road, proj) {
+    _buildRoadStateForProjection(x, y, heading, road, proj, forcedTravelSign = null) {
         const hx = Math.cos(heading);
         const hy = Math.sin(heading);
         const dotDir = hx * road.dir.x + hy * road.dir.y;
-        const travelSign = dotDir >= 0 ? 1 : -1;
 
-        const roadCenter = road.getPointAt(proj.t);
+        let travelSign;
+        if (forcedTravelSign === 1 || forcedTravelSign === -1) {
+            travelSign = forcedTravelSign;
+        } else if (proj.t < 0.12) {
+            travelSign = 1;
+        } else if (proj.t > 0.88) {
+            travelSign = -1;
+        } else {
+            travelSign = dotDir >= 0 ? 1 : -1;
+        }
+
+        // Lookahead point along the road so boids at intersections are pulled forward into the road,
+        // never backward into the intersection corner cap.
+        const lookaheadT = Math.max(0.14, Math.min(0.86, proj.t + travelSign * 0.18));
+        const roadCenter = road.getPointAt(lookaheadT);
         const travelDir = road.dir.scale(travelSign);
 
-        // Heading angle error relative to road forward travel direction (no left/right lane bias)
-        const desiredAngle = Math.atan2(travelDir.y, travelDir.x);
+        // Blend road axis angle with angle toward lookahead centerline when off-center
+        const roadAxisAngle = Math.atan2(travelDir.y, travelDir.x);
+        const toLookaheadAngle = Math.atan2(roadCenter.y - y, roadCenter.x - x);
+        const centerPullWeight = Math.min(0.55, proj.dist / Math.max(1, road.halfWidth));
+        const axisToLookaheadDiff = Vector2D.normalizeAngle(toLookaheadAngle - roadAxisAngle);
+        const desiredAngle = Vector2D.normalizeAngle(roadAxisAngle + axisToLookaheadDiff * centerPullWeight);
+
         const angleDiff = Vector2D.normalizeAngle(heading - desiredAngle);
         const headingError = Math.max(-1, Math.min(1, angleDiff / (Math.PI * 0.5)));
         const onRoad = this.isPointOnRoad(x, y);
@@ -221,7 +234,8 @@ class City {
                     x: pos.x,
                     y: pos.y,
                     heading,
-                    road
+                    road,
+                    travelSign
                 };
             }
         }

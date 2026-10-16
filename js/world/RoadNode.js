@@ -15,7 +15,7 @@ class RoadNode {
         this.y = y;
         this.isPerimeter = isPerimeter;
         this.roads = [];
-        this.radius = 20;
+        this.radius = 18;
     }
 
     /**
@@ -27,7 +27,7 @@ class RoadNode {
         if (this.roads.length >= 4) return false;
         if (!this.roads.includes(road)) {
             this.roads.push(road);
-            this.radius = this.roads.length === 4 ? 22 : 20;
+            this.radius = road.halfWidth || 18;
             return true;
         }
         return false;

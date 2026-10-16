@@ -67,6 +67,7 @@ class Boid {
         this.y = pose.y;
         this.heading = pose.heading || 0;
         this.currentRoad = pose.road || null;
+        this.travelSign = pose.travelSign || 1;
 
         const maxTypes = Math.max(1, Math.min(4, properties?.allowedTypesCount || 4));
         const activePool = Boid.ARCHETYPES.slice(0, maxTypes);
@@ -136,17 +137,26 @@ class Boid {
             this.collisionCooldown = Math.max(0, this.collisionCooldown - dt);
         }
 
-        // 1. Query current road state
-        const roadState = city.queryBoidRoadState(
+        // 1. Query current road state and smoothly transition onto outgoing road at intersections
+        let roadState = city.queryBoidRoadState(
             this.x,
             this.y,
             this.heading,
-            this.currentRoad
+            this.currentRoad,
+            this.travelSign
         );
 
-        // Manage intersection routing so boids smoothly transition onto outgoing roads at crossings
-        this._updateIntersectionRouting(roadState);
+        if (this._updateIntersectionRouting(roadState)) {
+            roadState = city.queryBoidRoadState(
+                this.x,
+                this.y,
+                this.heading,
+                this.currentRoad,
+                this.travelSign
+            );
+        }
         this.currentRoad = roadState.road;
+        this.travelSign = roadState.travelSign;
 
         // 2. Update front raycast sensors (road borders and boids in front)
         this.sensor.update(city, allBoids);
@@ -206,27 +216,31 @@ class Boid {
         const nextX = this.x + Math.cos(this.heading) * stepDist;
         const nextY = this.y + Math.sin(this.heading) * stepDist;
 
-        // 8. Check road boundary & keep boids inside the road network ("do not collapse")
+        // 8. Check road boundary & slide smoothly along road borders without getting stuck
         const stillOnRoad = city.isPointOnRoad(nextX, nextY);
         if (stillOnRoad) {
             this.x = nextX;
             this.y = nextY;
         } else {
-            // Hit the border of the road
             if (this.collisionCooldown <= 0) {
                 this.roadCollisions++;
                 this.fitness -= 5.0;
                 this.collisionCooldown = 0.45;
             }
-            this.speed *= 0.65;
+            this.speed *= 0.72;
 
-            // Deflect boid gently back toward the road centerline and align heading
+            // Rotate heading smoothly toward the forward lookahead point along the active road
+            const angleDiff = Vector2D.normalizeAngle(roadState.desiredAngle - this.heading);
+            this.heading = Vector2D.normalizeAngle(this.heading + angleDiff * 0.55);
+
+            // Slide smoothly toward the forward roadCenter lookahead so boids never get stuck on corners
+            const slideDist = Math.max(2.0, Math.abs(stepDist) * 0.7);
             const pullToCenter = new Vector2D(
                 roadState.roadCenter.x - this.x,
                 roadState.roadCenter.y - this.y
             ).normalize();
-            const candX = this.x + pullToCenter.x * 2.5;
-            const candY = this.y + pullToCenter.y * 2.5;
+            const candX = this.x + pullToCenter.x * slideDist;
+            const candY = this.y + pullToCenter.y * slideDist;
             if (city.isPointOnRoad(candX, candY)) {
                 this.x = candX;
                 this.y = candY;
@@ -234,49 +248,56 @@ class Boid {
                 this.x = roadState.roadCenter.x;
                 this.y = roadState.roadCenter.y;
             }
-
-            const angleDiff = Vector2D.normalizeAngle(roadState.desiredAngle - this.heading);
-            this.heading = Vector2D.normalizeAngle(this.heading + angleDiff * 0.48);
         }
 
         // 9. Fitness & anti-stall evaluation
         this._evaluateFitness(dt, stepDist, roadState, city, allBoids);
     }
 
+    _pickOutgoingRoad(node, currentRoad) {
+        const candidates = node.getConnectedRoadsExcept(currentRoad);
+        if (candidates.length === 0) return currentRoad;
+
+        const smoothCandidates = candidates.filter(r => {
+            const other = r.getOtherNode(node);
+            const outAngle = Math.atan2(other.y - node.y, other.x - node.x);
+            const turnAngle = Math.abs(Vector2D.normalizeAngle(outAngle - this.heading));
+            return turnAngle < 2.25;
+        });
+        const pool = smoothCandidates.length > 0 ? smoothCandidates : candidates;
+        return pool[Math.floor(Random.next() * pool.length)];
+    }
+
     _updateIntersectionRouting(roadState) {
         const node = roadState.approachingNode;
-        if (!node) return;
+        if (!node) return false;
 
-        // Choose a planned outgoing road when approaching an intersection
-        if (roadState.distToNode < node.radius + 38 && this.lastIntersectionNode !== node) {
-            const candidates = node.getConnectedRoadsExcept(roadState.road);
-            if (candidates.length > 0) {
-                const smoothCandidates = candidates.filter(r => {
-                    const other = r.getOtherNode(node);
-                    const outAngle = Math.atan2(other.y - node.y, other.x - node.x);
-                    const turnAngle = Math.abs(Vector2D.normalizeAngle(outAngle - this.heading));
-                    return turnAngle < 2.25;
-                });
-                const pool = smoothCandidates.length > 0 ? smoothCandidates : candidates;
-                this.plannedNextRoad = pool[Math.floor(Random.next() * pool.length)];
+        // 1. Choose a planned outgoing road when approaching an intersection
+        if (roadState.distToNode < node.radius + 42 && !this.plannedNextRoad && this.lastIntersectionNode !== node) {
+            this.plannedNextRoad = this._pickOutgoingRoad(node, roadState.road);
+        }
+
+        // 2. Once entering the intersection turn zone, immediately switch currentRoad & travelSign
+        // onto the outgoing road so the boid never drives into the dead end of the incoming road.
+        if (roadState.distToNode <= node.radius + 10) {
+            const nextRoad = this.plannedNextRoad || this._pickOutgoingRoad(node, roadState.road);
+            if (nextRoad && nextRoad !== roadState.road) {
+                this.currentRoad = nextRoad;
+                this.travelSign = nextRoad.nodeA === node ? 1 : -1;
                 this.lastIntersectionNode = node;
+                this.plannedNextRoad = null;
+                return true;
             }
         }
-
-        // Once entering the intersection node radius, transition active road to plannedNextRoad
-        if (this.plannedNextRoad && roadState.distToNode <= node.radius + 4) {
-            this.currentRoad = this.plannedNextRoad;
-            roadState.road = this.plannedNextRoad;
-            this.plannedNextRoad = null;
-        }
+        return false;
     }
 
     _computeGuidedHeadingError(roadState) {
-        if (this.plannedNextRoad && roadState.distToNode < roadState.approachingNode.radius + 28) {
+        if (this.plannedNextRoad && roadState.distToNode < roadState.approachingNode.radius + 34) {
             const node = roadState.approachingNode;
             const nextRoad = this.plannedNextRoad;
             const sign = nextRoad.nodeA === node ? 1 : -1;
-            const targetPoint = nextRoad.getPointAt(sign === 1 ? 0.3 : 0.7);
+            const targetPoint = nextRoad.getPointAt(sign === 1 ? 0.28 : 0.72);
             const desiredAngle = Math.atan2(targetPoint.y - this.y, targetPoint.x - this.x);
             const angleDiff = Vector2D.normalizeAngle(this.heading - desiredAngle);
             return Math.max(-1, Math.min(1, angleDiff / (Math.PI * 0.4)));
@@ -304,6 +325,7 @@ class Boid {
                 this.y = newPose.y;
                 this.heading = newPose.heading;
                 this.currentRoad = newPose.road;
+                this.travelSign = newPose.travelSign || 1;
                 this.speed = this.maxSpeed * 0.35;
                 this.stuckTimer = 0;
             }

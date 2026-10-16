@@ -61,20 +61,14 @@ class CityGenerator {
             (c === 0 && r === rows - 1) ||
             (c === cols - 1 && r === rows - 1);
 
-        // 1. Create nodes (omitting the 4 corners so diagonal roads limit the town corners within the rectangle)
+        // 1. Create nodes on aligned columns/rows (omitting the 4 corners so diagonal roads limit the town corners)
         for (let c = 0; c < cols; c++) {
             for (let r = 0; r < rows; r++) {
                 if (isCorner(c, r)) continue;
 
                 const onBoundary = (c === 0 || c === cols - 1 || r === 0 || r === rows - 1);
-                let x = colX[c];
-                let y = rowY[r];
-
-                // Gentle organic variation for interior intersections
-                if (!onBoundary) {
-                    x += (Random.next() * 2 - 1) * 18;
-                    y += (Random.next() * 2 - 1) * 14;
-                }
+                const x = Math.round(colX[c]);
+                const y = Math.round(rowY[r]);
 
                 const node = new RoadNode(nextNodeId++, x, y, onBoundary);
                 nodes.push(node);
@@ -91,7 +85,7 @@ class CityGenerator {
          *  1. Never exceeds 4 roads on either node
          *  2. Does not duplicate an existing road
          *  3. Does not geometrically cross any existing road
-         *  4. Maintains a clean minimum angle (>= 30 deg) with existing roads at both nodes
+         *  4. Maintains a smooth minimum angle (>= 38 deg) with existing roads at both nodes
          */
         const canAddRoad = (nodeA, nodeB) => {
             if (!nodeA || !nodeB || nodeA === nodeB) return false;
@@ -103,8 +97,8 @@ class CityGenerator {
                 : `${nodeB.id}-${nodeA.id}`;
             if (roadKeySet.has(key)) return false;
 
-            // Check minimum angle at nodeA and nodeB so roads never overlap at acute angles
-            const minAngleRad = 0.52; // ~30 degrees
+            // Enforce >= 38 deg separation so roads never form narrow sticking-out wedges at intersections
+            const minAngleRad = 0.66;
             const angleAB = Math.atan2(nodeB.y - nodeA.y, nodeB.x - nodeA.x);
             for (const r of nodeA.roads) {
                 const other = r.getOtherNode(nodeA);
@@ -141,7 +135,7 @@ class CityGenerator {
                 if (hit) return false;
             }
 
-            // Ensure segment AB does not pass right through another node's radius
+            // Ensure segment AB does not pass close to another node's radius
             for (const otherNode of nodes) {
                 if (otherNode === nodeA || otherNode === nodeB) continue;
                 const proj = Vector2D.closestPointOnSegment(
@@ -149,7 +143,7 @@ class CityGenerator {
                     nodeA.x, nodeA.y,
                     nodeB.x, nodeB.y
                 );
-                if (proj.t > 0.05 && proj.t < 0.95 && proj.dist < otherNode.radius + 22) {
+                if (proj.t > 0.05 && proj.t < 0.95 && proj.dist < otherNode.radius + 26) {
                     return false;
                 }
             }
@@ -185,7 +179,7 @@ class CityGenerator {
         addRoad(gridNodes[0][2], gridNodes[1][3], { isPerimeter: true, isDiagonal: true });
         addRoad(gridNodes[3][2], gridNodes[2][3], { isPerimeter: true, isDiagonal: true });
 
-        // 3. Add internal diagonal roads first so they are featured cleanly in the city
+        // 3. Add internal diagonal roads across the spacious center block
         const n11 = gridNodes[1][1];
         const n21 = gridNodes[2][1];
         const n12 = gridNodes[1][2];
@@ -193,8 +187,8 @@ class CityGenerator {
 
         if (Random.next() < 0.5) {
             // Pattern A: Central 4-way diagonal crossing node in the middle of the town
-            const cx = (n11.x + n21.x + n12.x + n22.x) * 0.25;
-            const cy = (n11.y + n21.y + n12.y + n22.y) * 0.25;
+            const cx = Math.round((n11.x + n21.x) * 0.5);
+            const cy = Math.round((n11.y + n12.y) * 0.5);
             const centerNode = new RoadNode(nextNodeId++, cx, cy, false);
             nodes.push(centerNode);
 
@@ -203,33 +197,28 @@ class CityGenerator {
             addRoad(n21, centerNode, { isDiagonal: true });
             addRoad(centerNode, n12, { isDiagonal: true });
         } else {
-            // Pattern B: Diagonal avenue across the center block + 1 outer block diagonal
+            // Pattern B: Clean diagonal avenue across the center block
             if (Random.next() < 0.5) {
                 addRoad(n11, n22, { isDiagonal: true });
             } else {
                 addRoad(n21, n12, { isDiagonal: true });
             }
-
-            // Pick 1 outer block for an additional diagonal road
-            const outerDiagPairs = [
-                [gridNodes[1][0], n21],
-                [gridNodes[2][0], n11],
-                [n12, gridNodes[2][3]],
-                [n22, gridNodes[1][3]],
-                [gridNodes[0][1], n12],
-                [n21, gridNodes[3][2]]
-            ];
-            CityGenerator._shuffle(outerDiagPairs);
-            for (const [a, b] of outerDiagPairs) {
-                if (addRoad(a, b, { isDiagonal: true })) {
-                    break;
-                }
-            }
         }
 
-        // 4. Add orthogonal grid streets connecting perimeter to interior and interior nodes together
-        const orthogonalCandidates = [
-            // Spokes from perimeter to interior nodes
+        // 4. Add inner box orthogonal streets so the interior forms a connected loop
+        const innerOrthogonal = [
+            [n11, n21],
+            [n12, n22],
+            [n11, n12],
+            [n21, n22]
+        ];
+        CityGenerator._shuffle(innerOrthogonal);
+        for (const [a, b] of innerOrthogonal) {
+            addRoad(a, b, {});
+        }
+
+        // 5. Add orthogonal spokes connecting perimeter to interior nodes (up to <= 4 roads per node)
+        const spokeCandidates = [
             [gridNodes[1][0], n11],
             [gridNodes[2][0], n21],
             [gridNodes[0][1], n11],
@@ -237,17 +226,10 @@ class CityGenerator {
             [gridNodes[3][1], n21],
             [gridNodes[3][2], n22],
             [gridNodes[1][3], n12],
-            [gridNodes[2][3], n22],
-            // Inner box orthogonal streets
-            [n11, n21],
-            [n12, n22],
-            [n11, n12],
-            [n21, n22]
+            [gridNodes[2][3], n22]
         ];
-
-        // Shuffle so different crossings get 3 or 4 roads each time while never exceeding 4 roads
-        CityGenerator._shuffle(orthogonalCandidates);
-        for (const [a, b] of orthogonalCandidates) {
+        CityGenerator._shuffle(spokeCandidates);
+        for (const [a, b] of spokeCandidates) {
             addRoad(a, b, {});
         }
 

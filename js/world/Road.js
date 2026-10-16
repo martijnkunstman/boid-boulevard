@@ -13,7 +13,7 @@ class Road {
         this.id = id;
         this.nodeA = nodeA;
         this.nodeB = nodeB;
-        this.width = options.width || 32;
+        this.width = options.width || 36;
         this.halfWidth = this.width * 0.5;
         this.isDiagonal = Boolean(options.isDiagonal);
         this.isPerimeter = Boolean(options.isPerimeter);

@@ -67,9 +67,10 @@ class SimulationRenderer {
 
     _renderRoadBorders(ctx, city) {
         ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
         ctx.strokeStyle = '#1f2937';
 
-        // Curb outlines for all roads
+        // Smooth round-capped curb outlines for all roads (no sticking-out node discs)
         for (const road of city.roads) {
             ctx.lineWidth = road.width + 4;
             ctx.beginPath();
@@ -77,35 +78,20 @@ class SimulationRenderer {
             ctx.lineTo(road.nodeB.x, road.nodeB.y);
             ctx.stroke();
         }
-
-        // Curb outlines for intersection nodes
-        ctx.fillStyle = '#1f2937';
-        for (const node of city.nodes) {
-            ctx.beginPath();
-            ctx.arc(node.x, node.y, node.radius + 2, 0, Math.PI * 2);
-            ctx.fill();
-        }
     }
 
     _renderRoadSurfaces(ctx, city) {
         ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
         ctx.strokeStyle = '#4b5563';
 
-        // Unified asphalt surface for roads (no left/right lane divider)
+        // Smooth unified asphalt surface for all roads and intersections
         for (const road of city.roads) {
             ctx.lineWidth = road.width;
             ctx.beginPath();
             ctx.moveTo(road.nodeA.x, road.nodeA.y);
             ctx.lineTo(road.nodeB.x, road.nodeB.y);
             ctx.stroke();
-        }
-
-        // Intersection node asphalt surfaces
-        ctx.fillStyle = '#4b5563';
-        for (const node of city.nodes) {
-            ctx.beginPath();
-            ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
-            ctx.fill();
         }
     }
 
