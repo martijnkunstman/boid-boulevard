@@ -390,8 +390,8 @@ class Simulation {
             this.boids[i].update(dt, this.city, this.boids);
         }
 
-        // Prevent boids from collapsing into each other
-        Boid.resolveBoidCollisions(this.boids);
+        // Prevent boids from collapsing into each other or getting pushed off-road
+        Boid.resolveBoidCollisions(this.boids, this.city);
 
         this.trainer.generationTimer += dt;
         if (this.trainer.generationTimer >= this.trainer.generationDuration) {

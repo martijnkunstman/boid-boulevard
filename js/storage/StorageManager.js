@@ -3,7 +3,7 @@
  * in browser localStorage.
  */
 class StorageManager {
-    static STORAGE_KEY = 'boid_boulevard_progress_v4';
+    static STORAGE_KEY = 'boid_boulevard_progress_v5';
 
     /**
      * Saves both the Trainer progress (generations, brains, chart history) and City layout.

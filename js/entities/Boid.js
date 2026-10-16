@@ -225,8 +225,15 @@ class Boid {
                 roadState.roadCenter.x - this.x,
                 roadState.roadCenter.y - this.y
             ).normalize();
-            this.x += pullToCenter.x * 2.8;
-            this.y += pullToCenter.y * 2.8;
+            const candX = this.x + pullToCenter.x * 2.5;
+            const candY = this.y + pullToCenter.y * 2.5;
+            if (city.isPointOnRoad(candX, candY)) {
+                this.x = candX;
+                this.y = candY;
+            } else {
+                this.x = roadState.roadCenter.x;
+                this.y = roadState.roadCenter.y;
+            }
 
             const angleDiff = Vector2D.normalizeAngle(roadState.desiredAngle - this.heading);
             this.heading = Vector2D.normalizeAngle(this.heading + angleDiff * 0.48);
@@ -306,10 +313,12 @@ class Boid {
     }
 
     /**
-     * Resolves pairwise boid-to-boid physical separation so boids NEVER collapse/stack onto each other.
+     * Resolves pairwise boid-to-boid physical separation so boids NEVER collapse/stack onto each other
+     * and never get pushed outside the road boundaries.
      * @param {Boid[]} boids
+     * @param {City|null} city
      */
-    static resolveBoidCollisions(boids) {
+    static resolveBoidCollisions(boids, city = null) {
         const n = boids.length;
         for (let i = 0; i < n; i++) {
             const a = boids[i];
@@ -331,11 +340,20 @@ class Boid {
                     const ratioA = b.mass / totalMass;
                     const ratioB = a.mass / totalMass;
 
-                    // Push apart so they never collapse into one another
-                    a.x -= nx * overlap * ratioA;
-                    a.y -= ny * overlap * ratioA;
-                    b.x += nx * overlap * ratioB;
-                    b.y += ny * overlap * ratioB;
+                    // Push apart so they never collapse into one another, while staying on road
+                    const nextAX = a.x - nx * overlap * ratioA;
+                    const nextAY = a.y - ny * overlap * ratioA;
+                    const nextBX = b.x + nx * overlap * ratioB;
+                    const nextBY = b.y + ny * overlap * ratioB;
+
+                    if (!city || city.isPointOnRoad(nextAX, nextAY)) {
+                        a.x = nextAX;
+                        a.y = nextAY;
+                    }
+                    if (!city || city.isPointOnRoad(nextBX, nextBY)) {
+                        b.x = nextBX;
+                        b.y = nextBY;
+                    }
 
                     // Determine who rear-ended whom and damp velocity
                     const aForwardDot = Math.cos(a.heading) * nx + Math.sin(a.heading) * ny;
@@ -352,7 +370,7 @@ class Boid {
                         b.speed = Math.min(b.speed * 0.5, a.speed * 0.85);
                         if (b.collisionCooldown <= 0) {
                             b.boidCollisions++;
-                            a.fitness -= 4.5;
+                            b.fitness -= 4.5;
                             b.collisionCooldown = 0.45;
                         }
                     }

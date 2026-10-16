@@ -201,7 +201,7 @@ class NeuralNetwork {
                 for (let i = 0; i < this.weights[l][j].length; i++) {
                     if (Random.next() < rate) {
                         this.weights[l][j][i] += NeuralNetwork.gaussianRandom() * amount;
-                        this.weights[l][j][i] = Math.max(-3.5, Math.min(3.5, this.weights[l][j]));
+                        this.weights[l][j][i] = Math.max(-3.5, Math.min(3.5, this.weights[l][j][i]));
                     }
                 }
             }
@@ -229,8 +229,12 @@ class NeuralNetwork {
             return new NeuralNetwork();
         }
         const nn = new NeuralNetwork(data.layerSizes);
-        nn.weights = data.weights.map(layer => layer.map(row => [...row]));
-        nn.biases = data.biases.map(layer => [...layer]);
+        nn.weights = data.weights.map(layer =>
+            layer.map(row => row.map(w => (Number.isFinite(w) ? w : 0)))
+        );
+        nn.biases = data.biases.map(layer =>
+            layer.map(b => (Number.isFinite(b) ? b : 0))
+        );
         return nn;
     }
 }
