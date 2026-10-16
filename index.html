@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Boid Boulevard - Neural Network City Traffic Simulation</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <header>
+        <div class="header-title">
+            <h1>Boid Boulevard - City Traffic &amp; Neuroevolution Simulation</h1>
+            <p>Closed rectangular city with diagonal boundary roads, height differences, bridges, stoplights, and neural network boids.</p>
+        </div>
+        <div class="stats-bar">
+            <span>Gen: <strong id="stat-gen">1</strong></span>
+            <span>Timer: <strong id="stat-timer">0.0s / 18s</strong></span>
+            <span>Boids: <strong id="stat-boids">55</strong></span>
+            <span>Current Best Fitness: <strong id="stat-best-fit">0.0</strong></span>
+            <span>All-Time Best: <strong id="stat-alltime-fit">0.0</strong></span>
+        </div>
+    </header>
+
+    <div class="controls-bar">
+        <div class="view-tabs">
+            <strong>Screen:</strong>
+            <button class="tab-btn active" data-view="all">All Screens</button>
+            <button class="tab-btn" data-view="sim">Simulation Screen</button>
+            <button class="tab-btn" data-view="debug">Debug Screen</button>
+            <button class="tab-btn" data-view="charts">Progress Charts Screen</button>
+        </div>
+
+        <div class="options-group">
+            <label>
+                Speed:
+                <select id="select-speed">
+                    <option value="1" selected>1x</option>
+                    <option value="2">2x</option>
+                    <option value="4">4x</option>
+                    <option value="8">8x</option>
+                </select>
+            </label>
+            <label>
+                Boids:
+                <input type="number" id="input-pop-size" min="15" max="120" value="55">
+            </label>
+            <label>
+                <input type="checkbox" id="chk-all-sensors"> All Sensors
+            </label>
+            <label>
+                <input type="checkbox" id="chk-elev-labels" checked> Height Labels
+            </label>
+        </div>
+
+        <div class="btn-group">
+            <button id="btn-pause">Pause</button>
+            <button id="btn-next-gen">Next Gen Now</button>
+            <button id="btn-new-city">New Random City (Keep Brains)</button>
+            <button id="btn-restart-clear" class="danger-btn">Restart &amp; Clear Local Storage</button>
+        </div>
+    </div>
+
+    <!-- 1. SIMULATION SCREEN -->
+    <section id="section-simulation" class="screen-section">
+        <h2>City Simulation Screen (Click any boid to inspect in Debug Screen)</h2>
+        <div class="canvas-wrapper">
+            <canvas id="sim-canvas" width="1020" height="620"></canvas>
+            <div class="legend-bar">
+                <span><i class="legend-dot" style="background:#2563eb;"></i>Compact Boid</span>
+                <span><i class="legend-dot" style="background:#059669;"></i>Sedan Boid</span>
+                <span><i class="legend-dot" style="background:#dc2626;"></i>Sports Boid</span>
+                <span><i class="legend-dot" style="background:#d97706;"></i>Heavy Boid</span>
+                <span><i class="legend-dot" style="background:#f59e0b;"></i>Bridge Overpass Guardrail</span>
+                <span><i class="legend-dot" style="background:#829b5f;"></i>Terrain Height Contours</span>
+                <span><strong>Sensors:</strong> Green=Clear, Amber=Road Side, Red=Boid Ahead</span>
+            </div>
+        </div>
+    </section>
+
+    <!-- 2. DEBUG SCREEN -->
+    <section id="section-debug" class="screen-section">
+        <h2>Debug Screen (Live Neural Network, Front Sensors, Telemetry &amp; LocalStorage)</h2>
+        <div class="debug-layout">
+            <div class="nn-panel">
+                <h3>Neural Network [19 Inputs &rarr; 14 &rarr; 8 &rarr; 2 Outputs (Steer, Throttle/Brake)]</h3>
+                <canvas id="nn-canvas" width="440" height="310"></canvas>
+            </div>
+            <div id="debug-telemetry"></div>
+        </div>
+    </section>
+
+    <!-- 3. PROGRESS CHARTS SCREEN -->
+    <section id="section-charts" class="screen-section">
+        <h2>Training Progress Charts Screen</h2>
+        <div class="charts-grid">
+            <div class="chart-card">
+                <canvas id="chart-fitness" width="470" height="220"></canvas>
+            </div>
+            <div class="chart-card">
+                <canvas id="chart-distance" width="470" height="220"></canvas>
+            </div>
+            <div class="chart-card">
+                <canvas id="chart-collisions" width="470" height="220"></canvas>
+            </div>
+            <div class="chart-card">
+                <canvas id="chart-compliance" width="470" height="220"></canvas>
+            </div>
+        </div>
+    </section>
+
+    <!-- OOP Class Scripts -->
+    <script src="js/math/Vector2D.js"></script>
+    <script src="js/nn/NeuralNetwork.js"></script>
+    <script src="js/world/RoadNode.js"></script>
+    <script src="js/world/TrafficLight.js"></script>
+    <script src="js/world/Road.js"></script>
+    <script src="js/world/City.js"></script>
+    <script src="js/world/CityGenerator.js"></script>
+    <script src="js/entities/Sensor.js"></script>
+    <script src="js/entities/Boid.js"></script>
+    <script src="js/training/Trainer.js"></script>
+    <script src="js/storage/StorageManager.js"></script>
+    <script src="js/ui/SimulationRenderer.js"></script>
+    <script src="js/ui/DebugScreen.js"></script>
+    <script src="js/ui/ChartScreen.js"></script>
+    <script src="js/Simulation.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>

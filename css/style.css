@@ -1,0 +1,272 @@
+/* Basic, utilitarian stylesheet for Boid Boulevard City Simulation */
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 13px;
+    background-color: #f3f4f6;
+    color: #111827;
+    padding: 10px;
+}
+
+header {
+    background: #ffffff;
+    border: 1px solid #9ca3af;
+    padding: 8px 12px;
+    margin-bottom: 10px;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+}
+
+.header-title h1 {
+    font-size: 17px;
+    margin-bottom: 2px;
+}
+
+.header-title p {
+    font-size: 11px;
+    color: #4b5563;
+}
+
+.stats-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    background: #f9fafb;
+    border: 1px solid #d1d5db;
+    padding: 5px 10px;
+    font-family: monospace;
+    font-size: 12px;
+}
+
+.controls-bar {
+    background: #ffffff;
+    border: 1px solid #9ca3af;
+    padding: 8px 12px;
+    margin-bottom: 10px;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+}
+
+.btn-group, .view-tabs, .options-group {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+}
+
+button, select, input[type="number"] {
+    font-size: 12px;
+    padding: 4px 9px;
+    border: 1px solid #6b7280;
+    background: #e5e7eb;
+    color: #111827;
+    cursor: pointer;
+}
+
+button:hover {
+    background: #d1d5db;
+}
+
+button.danger-btn {
+    background: #fee2e2;
+    border-color: #dc2626;
+    color: #991b1b;
+    font-weight: bold;
+}
+
+button.danger-btn:hover {
+    background: #fecaca;
+}
+
+.tab-btn.active {
+    background: #1f2937;
+    color: #ffffff;
+    border-color: #111827;
+}
+
+input[type="number"] {
+    width: 58px;
+    background: #ffffff;
+}
+
+label {
+    font-size: 12px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.screen-section {
+    background: #ffffff;
+    border: 1px solid #9ca3af;
+    padding: 10px;
+    margin-bottom: 10px;
+}
+
+.screen-section h2 {
+    font-size: 14px;
+    margin-bottom: 8px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.hidden {
+    display: none !important;
+}
+
+.canvas-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+#sim-canvas {
+    border: 1px solid #374151;
+    max-width: 100%;
+    height: auto;
+    cursor: pointer;
+}
+
+.legend-bar {
+    margin-top: 6px;
+    font-size: 11px;
+    color: #374151;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+}
+
+.legend-dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    margin-right: 4px;
+    vertical-align: middle;
+    border: 1px solid #111;
+}
+
+.debug-layout {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: flex-start;
+}
+
+.nn-panel {
+    flex: 0 0 auto;
+}
+
+.nn-panel h3 {
+    font-size: 12px;
+    margin-bottom: 4px;
+}
+
+#nn-canvas {
+    border: 1px solid #374151;
+    display: block;
+}
+
+#debug-telemetry {
+    flex: 1 1 500px;
+}
+
+.debug-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 10px;
+}
+
+.debug-box {
+    border: 1px solid #d1d5db;
+    background: #f9fafb;
+    padding: 8px;
+}
+
+.debug-box h4 {
+    font-size: 12px;
+    margin-bottom: 6px;
+    border-bottom: 1px solid #d1d5db;
+    padding-bottom: 3px;
+}
+
+.debug-box table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+    font-family: monospace;
+}
+
+.debug-box td {
+    padding: 3px 2px;
+    border-bottom: 1px solid #e5e7eb;
+    vertical-align: middle;
+}
+
+.bar-track {
+    width: 100%;
+    height: 7px;
+    background: #e5e7eb;
+    border: 1px solid #9ca3af;
+    margin-top: 2px;
+}
+
+.bar-fill {
+    height: 100%;
+}
+
+.steer-fill {
+    background: #2563eb;
+}
+
+.throttle-pos {
+    background: #16a34a;
+}
+
+.throttle-neg {
+    background: #dc2626;
+}
+
+.sensor-chip {
+    display: inline-block;
+    padding: 1px 3px;
+    background: #fef3c7;
+    border: 1px solid #d97706;
+    font-size: 10px;
+    margin: 1px 0;
+}
+
+.sensor-chip.boid-chip {
+    background: #fee2e2;
+    border-color: #dc2626;
+}
+
+.charts-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(440px, 1fr));
+    gap: 10px;
+}
+
+.chart-card {
+    border: 1px solid #d1d5db;
+    background: #f9fafb;
+    padding: 6px;
+    display: flex;
+    justify-content: center;
+}
+
+.chart-card canvas {
+    border: 1px solid #d1d5db;
+    max-width: 100%;
+    height: auto;
+}
