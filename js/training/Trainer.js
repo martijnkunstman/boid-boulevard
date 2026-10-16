@@ -141,7 +141,7 @@ class Trainer {
         const poolSize = Math.max(2, Math.floor(sortedBoids.length * 0.55));
         let best = null;
         for (let i = 0; i < k; i++) {
-            const idx = Math.floor(Math.random() * poolSize);
+            const idx = Math.floor(Random.next() * poolSize);
             const candidate = sortedBoids[idx];
             if (!best || candidate.fitness > best.fitness) {
                 best = candidate;

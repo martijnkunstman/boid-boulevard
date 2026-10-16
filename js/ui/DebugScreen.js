@@ -192,6 +192,7 @@ class DebugScreen {
                 <div class="debug-box">
                     <h4>City Map &amp; Persistence</h4>
                     <table>
+                        <tr><td>Random Seed:</td><td><strong>${city.seed || Random.currentSeed}</strong></td></tr>
                         <tr><td>Generation:</td><td><strong>${trainer.generation}</strong> (${trainer.generationTimer.toFixed(1)}s / ${trainer.generationDuration}s)</td></tr>
                         <tr><td>All-Time Best Fitness:</td><td>${trainer.allTimeBestFitness > -1e5 ? trainer.allTimeBestFitness.toFixed(1) : '0.0'}</td></tr>
                         <tr><td>Active Boids:</td><td>${allBoids.length}</td></tr>

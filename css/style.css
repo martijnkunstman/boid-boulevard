@@ -65,7 +65,7 @@ header {
     gap: 6px;
 }
 
-button, select, input[type="number"] {
+button, select, input[type="number"], input[type="text"] {
     font-size: 12px;
     padding: 4px 9px;
     border: 1px solid #6b7280;
@@ -98,6 +98,14 @@ button.danger-btn:hover {
 input[type="number"] {
     width: 58px;
     background: #ffffff;
+    cursor: text;
+}
+
+input[type="text"] {
+    width: 86px;
+    background: #ffffff;
+    font-family: monospace;
+    cursor: text;
 }
 
 label {

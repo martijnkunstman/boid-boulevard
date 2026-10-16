@@ -32,6 +32,11 @@
 
         <div class="options-group">
             <label>
+                Seed:
+                <input type="text" id="input-seed" value="104729" title="Deterministic random seed">
+            </label>
+            <button id="btn-apply-seed">Apply Seed</button>
+            <label>
                 Speed:
                 <select id="select-speed">
                     <option value="1" selected>1x</option>
@@ -104,6 +109,7 @@
     </section>
 
     <!-- OOP Class Scripts -->
+    <script src="js/math/Random.js"></script>
     <script src="js/math/Vector2D.js"></script>
     <script src="js/nn/NeuralNetwork.js"></script>
     <script src="js/world/RoadNode.js"></script>

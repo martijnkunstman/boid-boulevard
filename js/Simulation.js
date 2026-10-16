@@ -48,19 +48,46 @@ class Simulation {
             this.trainer.restoreFromData(saved.trainer);
             if (saved.city) {
                 this.city = City.deserialize(saved.city);
+                if (this.city && this.city.seed) {
+                    Random.setSeed(this.city.seed);
+                }
             }
         }
 
         if (!this.city) {
-            this.city = CityGenerator.generate(this.simCanvas.width, this.simCanvas.height);
+            const initialSeed = Random.generateSeedString();
+            this.city = CityGenerator.generate(this.simCanvas.width, this.simCanvas.height, initialSeed);
         }
 
+        this._syncSeedInputUI(this.city.seed);
         this.boids = this.trainer.createInitialPopulation(this.city);
         StorageManager.saveProgress(this.trainer, this.city);
     }
 
+    _syncSeedInputUI(seed) {
+        const seedInput = document.getElementById('input-seed');
+        if (seedInput) {
+            seedInput.value = String(seed ?? Random.currentSeed);
+        }
+    }
+
     /**
-     * Clears localStorage and restarts the entire simulation with random roads and random boids.
+     * Applies a user-specified seed from the UI input to deterministically generate that city.
+     */
+    applyCustomSeed(seedValue) {
+        const cleanSeed = String(seedValue ?? '').trim() || Random.generateSeedString();
+        this.city = CityGenerator.generate(this.simCanvas.width, this.simCanvas.height, cleanSeed);
+        this._syncSeedInputUI(this.city.seed);
+        this.boids = this.trainer.createInitialPopulation(this.city);
+        this.selectedBoid = null;
+        StorageManager.saveProgress(this.trainer, this.city);
+        this._updateHeaderStats();
+        this.renderer.render(this.city, this.boids, this.getInspectedBoid());
+        this.debugScreen.render(this.getInspectedBoid(), this.city, this.trainer, this.boids);
+    }
+
+    /**
+     * Clears localStorage and restarts the entire simulation with a new random seed, roads, and boids.
      */
     restartAndClearStorage() {
         StorageManager.clearProgress();
@@ -74,7 +101,9 @@ class Simulation {
             mutationStrength: 0.24
         });
 
-        this.city = CityGenerator.generate(this.simCanvas.width, this.simCanvas.height);
+        const newSeed = Random.generateSeedString();
+        this.city = CityGenerator.generate(this.simCanvas.width, this.simCanvas.height, newSeed);
+        this._syncSeedInputUI(this.city.seed);
         this.boids = this.trainer.createInitialPopulation(this.city);
         this.selectedBoid = null;
 
@@ -85,10 +114,12 @@ class Simulation {
     }
 
     /**
-     * Generates a new random city while keeping trained neural network progress.
+     * Generates a new random city with a fresh seed while keeping trained neural network progress.
      */
     generateNewRandomCityKeepBrains() {
-        this.city = CityGenerator.generate(this.simCanvas.width, this.simCanvas.height);
+        const newSeed = Random.generateSeedString();
+        this.city = CityGenerator.generate(this.simCanvas.width, this.simCanvas.height, newSeed);
+        this._syncSeedInputUI(this.city.seed);
         this.boids = this.trainer.createInitialPopulation(this.city);
         this.selectedBoid = null;
         StorageManager.saveProgress(this.trainer, this.city);
@@ -114,6 +145,20 @@ class Simulation {
     }
 
     _bindEvents() {
+        // Apply Seed button & input Enter key
+        const inputSeed = document.getElementById('input-seed');
+        const btnApplySeed = document.getElementById('btn-apply-seed');
+        if (btnApplySeed && inputSeed) {
+            btnApplySeed.addEventListener('click', () => {
+                this.applyCustomSeed(inputSeed.value);
+            });
+            inputSeed.addEventListener('keydown', e => {
+                if (e.key === 'Enter') {
+                    this.applyCustomSeed(inputSeed.value);
+                }
+            });
+        }
+
         // Restart & Clear Local Storage button
         const btnRestartClear = document.getElementById('btn-restart-clear');
         if (btnRestartClear) {

@@ -71,7 +71,7 @@ class Boid {
         // Assign vehicle archetype and varied physical properties
         const arch = properties?.archetype
             ? Boid.ARCHETYPES.find(a => a.name === properties.archetype) || Boid.ARCHETYPES[1]
-            : Boid.ARCHETYPES[Math.floor(Math.random() * Boid.ARCHETYPES.length)];
+            : Boid.ARCHETYPES[Math.floor(Random.next() * Boid.ARCHETYPES.length)];
 
         this.archetype = arch.name;
         this.color = arch.color;
@@ -100,7 +100,7 @@ class Boid {
             this.brain = brain.clone();
         } else {
             this.brain = new NeuralNetwork([17, 14, 8, 2]);
-            this.brain.applyInitialReflexBias(0.35 + Math.random() * 0.35);
+            this.brain.applyInitialReflexBias(0.35 + Random.next() * 0.35);
         }
 
         // Training & telemetry metrics
@@ -115,7 +115,7 @@ class Boid {
     }
 
     static _randInRange([min, max]) {
-        return min + Math.random() * (max - min);
+        return min + Random.next() * (max - min);
     }
 
     /**
@@ -245,7 +245,7 @@ class Boid {
                     return turnAngle < 2.25;
                 });
                 const pool = smoothCandidates.length > 0 ? smoothCandidates : candidates;
-                this.plannedNextRoad = pool[Math.floor(Math.random() * pool.length)];
+                this.plannedNextRoad = pool[Math.floor(Random.next() * pool.length)];
                 this.lastIntersectionNode = node;
             }
         }

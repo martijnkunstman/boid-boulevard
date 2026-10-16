@@ -9,13 +9,15 @@ class City {
      * @param {object} bounds
      * @param {RoadNode[]} nodes
      * @param {Road[]} roads
+     * @param {string} seed
      */
-    constructor(width, height, bounds, nodes, roads) {
+    constructor(width, height, bounds, nodes, roads, seed = '104729') {
         this.width = width;
         this.height = height;
         this.bounds = bounds;
         this.nodes = nodes;
         this.roads = roads;
+        this.seed = String(seed);
     }
 
     update(dt) {
@@ -197,9 +199,9 @@ class City {
      */
     getRandomSpawnPose(existingBoids = []) {
         for (let attempt = 0; attempt < 40; attempt++) {
-            const road = this.roads[Math.floor(Math.random() * this.roads.length)];
-            const travelSign = Math.random() < 0.5 ? 1 : -1;
-            const t = 0.25 + Math.random() * 0.5;
+            const road = this.roads[Math.floor(Random.next() * this.roads.length)];
+            const travelSign = Random.next() < 0.5 ? 1 : -1;
+            const t = 0.25 + Random.next() * 0.5;
             const pos = road.getPointAt(t);
             const heading = Math.atan2(road.dir.y * travelSign, road.dir.x * travelSign);
 
@@ -224,6 +226,7 @@ class City {
 
     serialize() {
         return {
+            seed: this.seed,
             width: this.width,
             height: this.height,
             bounds: this.bounds,
@@ -271,6 +274,6 @@ class City {
             roads.push(road);
         }
 
-        return new City(data.width, data.height, data.bounds, nodes, roads);
+        return new City(data.width, data.height, data.bounds, nodes, roads, data.seed || '104729');
     }
 }

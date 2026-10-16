@@ -32,10 +32,10 @@ class NeuralNetwork {
             for (let j = 0; j < outCount; j++) {
                 const row = [];
                 for (let i = 0; i < inCount; i++) {
-                    row.push((Math.random() * 2 - 1) * scale);
+                    row.push((Random.next() * 2 - 1) * scale);
                 }
                 layerWeights.push(row);
-                layerBiases.push((Math.random() * 2 - 1) * 0.25);
+                layerBiases.push((Random.next() * 2 - 1) * 0.25);
             }
 
             this.weights.push(layerWeights);
@@ -164,15 +164,15 @@ class NeuralNetwork {
         const child = this.clone();
         for (let l = 0; l < child.weights.length; l++) {
             for (let j = 0; j < child.weights[l].length; j++) {
-                const takePartnerNeuron = Math.random() < 0.5;
+                const takePartnerNeuron = Random.next() < 0.5;
                 if (takePartnerNeuron) {
                     child.biases[l][j] = partner.biases[l][j];
-                } else if (Math.random() < 0.3) {
+                } else if (Random.next() < 0.3) {
                     child.biases[l][j] = (this.biases[l][j] + partner.biases[l][j]) * 0.5;
                 }
 
                 for (let i = 0; i < child.weights[l][j].length; i++) {
-                    const r = Math.random();
+                    const r = Random.next();
                     if (r < 0.45) {
                         child.weights[l][j][i] = partner.weights[l][j][i];
                     } else if (r < 0.65) {
@@ -192,12 +192,12 @@ class NeuralNetwork {
     mutate(rate = 0.12, amount = 0.25) {
         for (let l = 0; l < this.weights.length; l++) {
             for (let j = 0; j < this.weights[l].length; j++) {
-                if (Math.random() < rate) {
+                if (Random.next() < rate) {
                     this.biases[l][j] += NeuralNetwork.gaussianRandom() * amount;
                     this.biases[l][j] = Math.max(-3.5, Math.min(3.5, this.biases[l][j]));
                 }
                 for (let i = 0; i < this.weights[l][j].length; i++) {
-                    if (Math.random() < rate) {
+                    if (Random.next() < rate) {
                         this.weights[l][j][i] += NeuralNetwork.gaussianRandom() * amount;
                         this.weights[l][j][i] = Math.max(-3.5, Math.min(3.5, this.weights[l][j][i]));
                     }
@@ -209,8 +209,8 @@ class NeuralNetwork {
     static gaussianRandom() {
         let u = 0;
         let v = 0;
-        while (u === 0) u = Math.random();
-        while (v === 0) v = Math.random();
+        while (u === 0) u = Random.next();
+        while (v === 0) v = Random.next();
         return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
     }
 

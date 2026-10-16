@@ -12,9 +12,16 @@ class CityGenerator {
     /**
      * @param {number} width - Canvas/world width
      * @param {number} height - Canvas/world height
+     * @param {string|number|null} seed - Optional seed for deterministic city generation
      * @returns {City}
      */
-    static generate(width = 1020, height = 620) {
+    static generate(width = 1020, height = 620, seed = null) {
+        if (seed !== null && seed !== undefined) {
+            Random.setSeed(seed);
+        } else {
+            Random.setSeed(Random.currentSeed);
+        }
+
         const marginX = 74;
         const marginY = 60;
         const rect = {
@@ -65,8 +72,8 @@ class CityGenerator {
 
                 // Gentle organic variation for interior intersections
                 if (!onBoundary) {
-                    x += (Math.random() * 2 - 1) * 18;
-                    y += (Math.random() * 2 - 1) * 14;
+                    x += (Random.next() * 2 - 1) * 18;
+                    y += (Random.next() * 2 - 1) * 14;
                 }
 
                 const node = new RoadNode(nextNodeId++, x, y, onBoundary);
@@ -184,7 +191,7 @@ class CityGenerator {
         const n12 = gridNodes[1][2];
         const n22 = gridNodes[2][2];
 
-        if (Math.random() < 0.5) {
+        if (Random.next() < 0.5) {
             // Pattern A: Central 4-way diagonal crossing node in the middle of the town
             const cx = (n11.x + n21.x + n12.x + n22.x) * 0.25;
             const cy = (n11.y + n21.y + n12.y + n22.y) * 0.25;
@@ -197,7 +204,7 @@ class CityGenerator {
             addRoad(centerNode, n12, { isDiagonal: true });
         } else {
             // Pattern B: Diagonal avenue across the center block + 1 outer block diagonal
-            if (Math.random() < 0.5) {
+            if (Random.next() < 0.5) {
                 addRoad(n11, n22, { isDiagonal: true });
             } else {
                 addRoad(n21, n12, { isDiagonal: true });
@@ -221,7 +228,6 @@ class CityGenerator {
         }
 
         // 4. Add orthogonal grid streets connecting perimeter to interior and interior nodes together
-        // All candidate orthogonal links
         const orthogonalCandidates = [
             // Spokes from perimeter to interior nodes
             [gridNodes[1][0], n11],
@@ -245,12 +251,12 @@ class CityGenerator {
             addRoad(a, b, {});
         }
 
-        return new City(width, height, rect, nodes, roads);
+        return new City(width, height, rect, nodes, roads, Random.currentSeed);
     }
 
     static _shuffle(arr) {
         for (let i = arr.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
+            const j = Math.floor(Random.next() * (i + 1));
             [arr[i], arr[j]] = [arr[j], arr[i]];
         }
         return arr;
@@ -260,7 +266,7 @@ class CityGenerator {
         const raw = [];
         let sum = 0;
         for (let i = 0; i < parts; i++) {
-            const v = 0.75 + Math.random() * 0.5;
+            const v = 0.75 + Random.next() * 0.5;
             raw.push(v);
             sum += v;
         }
