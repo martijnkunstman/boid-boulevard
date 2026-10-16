@@ -123,6 +123,13 @@ class DebugScreen {
         }
     }
 
+    static _yieldLabel(boid) {
+        if (boid.yieldOverride) return 'going (waited longest)';
+        if (!boid.mustYield) return 'free';
+        const reasons = { right: 'traffic from the right', oncoming: 'oncoming (turning left)', crossing: 'crossing occupied' };
+        return `yielding: ${reasons[boid.yieldReason] || boid.yieldReason} (${boid.yieldTimer.toFixed(1)} s)`;
+    }
+
     _renderTelemetryHTML(boid, city, trainer, allBoids) {
         if (!boid) {
             this.telemetryContainer.innerHTML = '<p>No active boid selected.</p>';
@@ -159,6 +166,7 @@ class DebugScreen {
                         <tr><td>Turn Rate / Mass:</td><td>${boid.turnRate.toFixed(2)} rad/s | ${boid.mass.toFixed(2)}x</td></tr>
                         <tr><td>Collisions (Road / Boid / Head-on):</td><td>${boid.roadCollisions} / ${boid.boidCollisions} / ${boid.headOnCollisions}</td></tr>
                         <tr><td>Time in Opposite Lane:</td><td>${boid.wrongLaneTime.toFixed(1)} s of ${boid.timeAlive.toFixed(1)} s</td></tr>
+                        <tr><td>Right of Way:</td><td>${DebugScreen._yieldLabel(boid)} | violations: ${boid.rightOfWayViolations}</td></tr>
                     </table>
                 </div>
 

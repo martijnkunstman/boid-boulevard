@@ -10,12 +10,13 @@
   - Procedural city road network strictly enclosed inside a rectangular perimeter so no road ever leads outside the city.
   - Features a perimeter boulevard, interior avenues, crossings (strictly capped at **$\le 4$ roads per crossing**), and **diagonal shortcut roads**.
   - **Two-way roads** (`44 px` wide) with a dashed centerline: traffic keeps right, each direction in its own lane.
+  - **Right of way at crossings** (3+ roads): a boid approaching a crossing gives way to traffic from its right, to anyone already on the crossing, and to oncoming traffic when it turns left itself. While it must give way, a red stop line appears in its lane and is sensed as a stationary obstacle on its boid rays (no extra network inputs). A boid that can no longer stop in time is committed and may cross; if four boids block each other, the one that waited longest goes.
 - **Deterministic Random Seed**
   - Uses a seeded Mulberry32 PRNG (`Random`) so entering the same seed reproduces the exact same city layout, spawn poses, and genetic mutations.
 - **Feedforward Neural Network (`[17 -> 10 -> 2]`)**
   - **17 Inputs**:
     - `7` Front Road-Border Ray Sensors (`-75°`, `-50°`, `-25°`, `0°`, `+25°`, `+50°`, `+75°`)
-    - `7` Front Boid-Detection Ray Sensors (same 7 angles)
+    - `7` Front Boid-Detection Ray Sensors (same 7 angles; also detect the stop line when the boid must give way)
     - `1` Closing Speed sensor toward the boid straight ahead (center ray only, so oncoming traffic in the other lane does not trigger it)
     - `1` Normalized Current Speed (`speed / maxSpeed`)
     - `1` Signed heading error toward a lookahead point in the boid's own (right-hand) lane, or into the correct lane of the next road when turning at a crossing
@@ -63,6 +64,8 @@ Each generation runs for a fixed duration (default `30s`, or `1,800` physics ste
   - Rear-ending another boid (`-4.5` per collision for the boid at fault, with a `0.45s` cooldown)
   - Head-on collisions (`-9.0` for both boids)
   - Driving in the opposite lane (`-1.5 / sec`; lane rules do not apply inside crossings)
+  - Not giving right of way: entering a crossing past the stop line while required to yield (`-80`; it has to outweigh the distance lost by waiting)
+  - Waiting at a stop line does not count as stalling
   - Idling or stalling below `6 px/s` (`-1.2 / sec`); a boid stuck for more than `3.6s` is respawned at a new location
   - Driving in reverse (`-0.1` per pixel reversed)
 
