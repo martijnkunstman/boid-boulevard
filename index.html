@@ -76,6 +76,15 @@
             <label>
                 <input type="checkbox" id="chk-all-sensors"> All Sensors
             </label>
+            <label title="Map overlay drawn over the city roads">
+                Overlay:
+                <select id="select-overlay">
+                    <option value="none" selected>None</option>
+                    <option value="traffic">Traffic heatmap</option>
+                    <option value="crashes">Crash heatmap</option>
+                    <option value="sdf">Road distance field (SDF)</option>
+                </select>
+            </label>
         </div>
 
         <div class="btn-group">
@@ -138,6 +147,7 @@
     <script src="js/nn/NeuralNetwork.js"></script>
     <script src="js/world/RoadNode.js"></script>
     <script src="js/world/Road.js"></script>
+    <script src="js/world/HeatGrid.js"></script>
     <script src="js/world/City.js"></script>
     <script src="js/world/CityGenerator.js"></script>
     <script src="js/entities/Sensor.js"></script>

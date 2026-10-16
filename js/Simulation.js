@@ -155,6 +155,7 @@ class Simulation {
      */
     forceNextGeneration() {
         this.boids = this.trainer.evolveNextGeneration(this.boids, this.city);
+        this.city.decayHeatmaps();
         this.selectedBoid = null;
         StorageManager.saveProgress(this.trainer, this.city);
         this._updateHeaderStats();
@@ -284,6 +285,16 @@ class Simulation {
             chkAllSensors.addEventListener('input', updateSensorToggle);
         }
 
+        // Map overlay selector (none, traffic heatmap, crash heatmap, distance field)
+        const selectOverlay = document.getElementById('select-overlay');
+        if (selectOverlay) {
+            this.renderer.overlayMode = selectOverlay.value;
+            selectOverlay.addEventListener('change', () => {
+                this.renderer.overlayMode = selectOverlay.value;
+                this.renderer.render(this.city, this.boids, this.getInspectedBoid());
+            });
+        }
+
         // View screen switcher tabs
         const tabButtons = document.querySelectorAll('.tab-btn');
         tabButtons.forEach(btn => {
@@ -410,6 +421,7 @@ class Simulation {
         this.trainer.generationTimer += dt;
         if (this.trainer.generationTimer >= this.trainer.generationDuration) {
             this.boids = this.trainer.evolveNextGeneration(this.boids, this.city);
+            this.city.decayHeatmaps();
             this.selectedBoid = null;
             StorageManager.saveProgress(this.trainer, this.city);
             return true;

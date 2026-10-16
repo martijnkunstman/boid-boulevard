@@ -7,6 +7,10 @@ class City {
     static SDF_CELL_SIZE = 2;
     static SDF_FAR_DISTANCE = 8;
 
+    // Traffic & crash heatmaps: cell size in px, and how much activity is kept at each generation end
+    static HEAT_CELL_SIZE = 10;
+    static HEAT_DECAY_PER_GENERATION = 0.5;
+
     /**
      * @param {number} width
      * @param {number} height
@@ -24,6 +28,18 @@ class City {
         this.seed = String(seed);
 
         this._buildDistanceField();
+
+        // Heatmaps of where boids drive (seconds spent per cell) and where they crash
+        this.trafficHeat = new HeatGrid(width, height, City.HEAT_CELL_SIZE);
+        this.crashHeat = new HeatGrid(width, height, City.HEAT_CELL_SIZE);
+    }
+
+    /**
+     * Fades both heatmaps at the end of a generation so they reflect recent driving behavior.
+     */
+    decayHeatmaps() {
+        this.trafficHeat.decay(City.HEAT_DECAY_PER_GENERATION);
+        this.crashHeat.decay(City.HEAT_DECAY_PER_GENERATION);
     }
 
     /**

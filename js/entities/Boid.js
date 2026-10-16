@@ -226,6 +226,7 @@ class Boid {
                 this.roadCollisions++;
                 this.fitness -= 5.0;
                 this.collisionCooldown = 0.45;
+                city.crashHeat.add(this.x, this.y);
             }
             this.speed *= 0.72;
 
@@ -252,6 +253,9 @@ class Boid {
 
         // 9. Fitness & anti-stall evaluation
         this._evaluateFitness(dt, stepDist, roadState, city, allBoids);
+
+        // 10. Traffic density heatmap (seconds spent per cell)
+        city.trafficHeat.add(this.x, this.y, dt);
     }
 
     _pickOutgoingRoad(node, currentRoad) {
@@ -387,6 +391,7 @@ class Boid {
                             a.boidCollisions++;
                             a.fitness -= 4.5;
                             a.collisionCooldown = 0.45;
+                            if (city) city.crashHeat.add(a.x, a.y);
                         }
                     } else {
                         b.speed = Math.min(b.speed * 0.5, a.speed * 0.85);
@@ -394,6 +399,7 @@ class Boid {
                             b.boidCollisions++;
                             b.fitness -= 4.5;
                             b.collisionCooldown = 0.45;
+                            if (city) city.crashHeat.add(b.x, b.y);
                         }
                     }
                 }

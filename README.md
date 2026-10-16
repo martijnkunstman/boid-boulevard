@@ -40,7 +40,12 @@
   - Chart history keeps at most `500` points: when that is exceeded, every other point is removed (back to ~`250`), so the charts always show the complete run from generation 1 at a coarser resolution for older generations.
   - Includes a **Restart & Clear Local Storage** button to wipe saved data and start fresh.
 - **Three Built-In Screens**
-  1. **City Simulation Screen**: Interactive canvas view of the city, boids, and raycast sensors (click any boid to inspect it).
+  1. **City Simulation Screen**: Interactive canvas view of the city, boids, and raycast sensors (click any boid to inspect it). An **Overlay** selector draws one of these over the roads:
+     - **Traffic heatmap**: where boids spend their time
+     - **Crash heatmap**: where road-border and boid-to-boid collisions happen
+     - **Road distance field (SDF)**: the precomputed signed distance field used for road queries
+
+     Heatmaps fade by half at the end of every generation, so they reflect recent driving behavior.
   2. **Debug Screen**: Live neural network topology & synapse activation visualizer, steering/throttle gauges, sensor readouts, and city/storage diagnostics.
   3. **Training Progress Charts Screen**: Multi-generation line charts for Best/Average Fitness, Average Distance Traveled, Average Collisions, and Average Population Speed.
 
@@ -83,6 +88,7 @@ boid-boulevard/
     ├── world/
     │   ├── RoadNode.js         # Intersection / waypoint node
     │   ├── Road.js             # Unified single-track road segment & AABB geometry
+    │   ├── HeatGrid.js         # Coarse grid for traffic & crash heatmaps
     │   ├── City.js             # City graph, road distance field (SDF) & road queries
     │   └── CityGenerator.js    # Procedural closed rectangular city generator
     ├── entities/
