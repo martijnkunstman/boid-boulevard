@@ -9,7 +9,7 @@
 - **Closed Rectangular City Generation**
   - Procedural city road network strictly enclosed inside a rectangular perimeter so no road ever leads outside the city.
   - Features a perimeter boulevard, interior avenues, crossings (strictly capped at **$\le 4$ roads per crossing**), and **diagonal shortcut roads**.
-  - **Two-way roads** (`44 px` wide) with a dashed centerline: traffic keeps right, each direction in its own lane.
+  - **Two-way roads** (`53 px` wide) with a dashed centerline: traffic keeps right, each direction in its own lane.
   - **Right of way at crossings** (3+ roads): a boid approaching a crossing gives way to traffic from its right, to anyone already on the crossing, and to oncoming traffic when it turns left itself. While it must give way, a red stop line appears in its lane and is sensed as a stationary obstacle on its boid rays (no extra network inputs). A boid that can no longer stop in time is committed and may cross; if four boids block each other, the one that waited longest goes.
 - **Deterministic Random Seed**
   - Uses a seeded Mulberry32 PRNG (`Random`) so entering the same seed reproduces the exact same city layout, spawn poses, and genetic mutations.
