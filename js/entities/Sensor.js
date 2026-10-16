@@ -108,8 +108,9 @@ class Sensor {
             let boidReading = 0;
             if (hitBoid) {
                 boidReading = Math.max(0, Math.min(1, 1 - closestBoidDist / this.rayLength));
-                // If in central forward cone, compute relative closing velocity
-                if (Math.abs(relAngle) < 0.45) {
+                // Only the center ray measures closing velocity: the +-25 deg rays would also catch
+                // oncoming traffic passing in the other lane and trigger needless braking
+                if (Math.abs(relAngle) < 0.2) {
                     const otherVelAlongRay =
                         Math.cos(hitBoid.heading) * hitBoid.speed * dx +
                         Math.sin(hitBoid.heading) * hitBoid.speed * dy;

@@ -9,16 +9,16 @@
 - **Closed Rectangular City Generation**
   - Procedural city road network strictly enclosed inside a rectangular perimeter so no road ever leads outside the city.
   - Features a perimeter boulevard, interior avenues, crossings (strictly capped at **$\le 4$ roads per crossing**), and **diagonal shortcut roads**.
-  - Unified single-track roads where boids can drive in any direction while staying within road boundaries.
+  - **Two-way roads** (`44 px` wide) with a dashed centerline: traffic keeps right, each direction in its own lane.
 - **Deterministic Random Seed**
   - Uses a seeded Mulberry32 PRNG (`Random`) so entering the same seed reproduces the exact same city layout, spawn poses, and genetic mutations.
 - **Feedforward Neural Network (`[17 -> 10 -> 2]`)**
   - **17 Inputs**:
-    - `7` Front Road-Border Ray Sensors (`-75°`, `-45°`, `-22°`, `0°`, `+22°`, `+45°`, `+75°`)
+    - `7` Front Road-Border Ray Sensors (`-75°`, `-50°`, `-25°`, `0°`, `+25°`, `+50°`, `+75°`)
     - `7` Front Boid-Detection Ray Sensors (same 7 angles)
-    - `1` Closing Speed sensor toward the nearest boid ahead
+    - `1` Closing Speed sensor toward the boid straight ahead (center ray only, so oncoming traffic in the other lane does not trigger it)
     - `1` Normalized Current Speed (`speed / maxSpeed`)
-    - `1` Signed Road Alignment Error (`sin(headingError)`)
+    - `1` Signed heading error toward a lookahead point in the boid's own (right-hand) lane, or into the correct lane of the next road when turning at a crossing
   - **10 Hidden Neurons** (`tanh` activation)
   - **2 Continuous Outputs** (`tanh` activation in `[-1, +1]`):
     1. **Steering Direction**: `-1` (full left) to `+1` (full right)
@@ -27,14 +27,15 @@
   - Choose between **1 to 4 vehicle types** (`Sedan`, `Compact`, `Sports`, `Heavy`), each with distinct top speed, acceleration, braking force, turn rate, radius, and mass.
   - Offspring inherit their parent's vehicle archetype during evolution so neural networks specialize in their vehicle's physical dynamics.
 - **Non-Collapsing Physics**
-  - Hard road-border containment and iterative pairwise circle-circle collision resolution keep boids from overlapping or escaping the road network.
+  - Hard road-border containment and pairwise collision resolution keep boids from overlapping or escaping the road network.
+  - Each boid has an elliptical collision shape (its length front-to-back, its width side-by-side), so boids passing each other in opposite lanes do not collide.
 - **High-Speed & Decoupled "Turbo" Training**
   - Fixed-timestep (`1/60s`) physics loop supports `1x`, `2x`, `4x`, `8x`, `16x`, `32x`, and `64x` speed multipliers without physics tunneling.
+  - Configurable generation duration (`15s`, `30s`, `45s`, `60s`).
   - **Turbo (Skip Render)** mode decouples visualization from physics: each animation frame runs as many physics steps as fit in a `14 ms` time budget (instead of a fixed count) and renders the canvas only once per completed generation, so any physics speedup directly becomes training throughput.
 - **Signed Distance Field Road Queries**
   - On creation, each city precomputes a `2 px` grid of signed distances to the nearest road border (~160 KB, built in under 1 ms).
   - On-road checks are a single bilinear lookup, and road-border sensor rays use sphere tracing over the field instead of fixed-step sampling, making road raycasts 2-3x faster and more accurate.
-  - Configurable generation duration (`15s`, `30s`, `45s`, `60s`).
 - **Automatic Persistence (`localStorage`)**
   - Automatically saves the city map, generation counter, elite neural networks, and historical chart metrics after every generation.
   - Chart history keeps at most `500` points: when that is exceeded, every other point is removed (back to ~`250`), so the charts always show the complete run from generation 1 at a coarser resolution for older generations.
@@ -56,10 +57,12 @@
 Each generation runs for a fixed duration (default `30s`, or `1,800` physics steps at `60 Hz`). At every step, each boid's fitness is updated based on its driving behavior:
 
 - **Rewards**:
-  - Forward distance traveled along the road (`+0.25` per pixel), weighted by alignment with the road direction (`cos(angle)`); only counted while moving forward and roughly aligned with the road
+  - Forward distance traveled along the road (`+0.25` per pixel), weighted by alignment with the road direction (`cos(angle)`); only counted while moving forward and roughly aligned with the road, and halved while driving in the opposite lane
 - **Penalties**:
   - Hitting road borders (`-5.0` per impact, with a `0.45s` cooldown)
   - Rear-ending another boid (`-4.5` per collision for the boid at fault, with a `0.45s` cooldown)
+  - Head-on collisions (`-9.0` for both boids)
+  - Driving in the opposite lane (`-1.5 / sec`; lane rules do not apply inside crossings)
   - Idling or stalling below `6 px/s` (`-1.2 / sec`); a boid stuck for more than `3.6s` is respawned at a new location
   - Driving in reverse (`-0.1` per pixel reversed)
 
@@ -87,7 +90,7 @@ boid-boulevard/
     │   └── NeuralNetwork.js    # Feedforward neural network, crossover & mutation
     ├── world/
     │   ├── RoadNode.js         # Intersection / waypoint node
-    │   ├── Road.js             # Unified single-track road segment & AABB geometry
+    │   ├── Road.js             # Two-way road segment, lane geometry & AABB
     │   ├── HeatGrid.js         # Coarse grid for traffic & crash heatmaps
     │   ├── City.js             # City graph, road distance field (SDF) & road queries
     │   └── CityGenerator.js    # Procedural closed rectangular city generator

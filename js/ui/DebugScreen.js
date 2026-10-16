@@ -157,7 +157,8 @@ class DebugScreen {
                         <tr><td>Speed / Max Speed:</td><td>${boid.speed.toFixed(1)} / ${boid.maxSpeed.toFixed(1)} px/s</td></tr>
                         <tr><td>Accel / Brake Force:</td><td>${boid.acceleration.toFixed(0)} / ${boid.brakingForce.toFixed(0)}</td></tr>
                         <tr><td>Turn Rate / Mass:</td><td>${boid.turnRate.toFixed(2)} rad/s | ${boid.mass.toFixed(2)}x</td></tr>
-                        <tr><td>Collisions (Road / Boid):</td><td>${boid.roadCollisions} / ${boid.boidCollisions}</td></tr>
+                        <tr><td>Collisions (Road / Boid / Head-on):</td><td>${boid.roadCollisions} / ${boid.boidCollisions} / ${boid.headOnCollisions}</td></tr>
+                        <tr><td>Time in Opposite Lane:</td><td>${boid.wrongLaneTime.toFixed(1)} s of ${boid.timeAlive.toFixed(1)} s</td></tr>
                     </table>
                 </div>
 

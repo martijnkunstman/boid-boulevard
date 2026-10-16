@@ -1,8 +1,12 @@
 /**
- * Road - Represents a unified single-track city road segment connecting two RoadNodes.
- * Supports orthogonal and diagonal road geometry without left/right lane division.
+ * Road - Represents a two-way city road segment connecting two RoadNodes.
+ * Traffic keeps right: each travel direction has its own lane, centered a quarter
+ * of the road width to the right of the centerline.
+ * Supports orthogonal and diagonal road geometry.
  */
 class Road {
+    static DEFAULT_WIDTH = 44;
+
     /**
      * @param {number} id
      * @param {RoadNode} nodeA
@@ -13,8 +17,10 @@ class Road {
         this.id = id;
         this.nodeA = nodeA;
         this.nodeB = nodeB;
-        this.width = options.width || 36;
+        this.width = options.width || Road.DEFAULT_WIDTH;
         this.halfWidth = this.width * 0.5;
+        // Distance from the centerline to the center of each lane
+        this.laneOffset = this.width * 0.25;
         this.isDiagonal = Boolean(options.isDiagonal);
         this.isPerimeter = Boolean(options.isPerimeter);
 
@@ -52,6 +58,25 @@ class Road {
         return new Vector2D(
             this.nodeA.x + (this.nodeB.x - this.nodeA.x) * t,
             this.nodeA.y + (this.nodeB.y - this.nodeA.y) * t
+        );
+    }
+
+    /**
+     * Returns the unit vector pointing to the right-hand side when driving in travelSign direction
+     * (+1 = nodeA -> nodeB, -1 = nodeB -> nodeA). Canvas y points down, so right of (x, y) is (-y, x).
+     */
+    getRightNormal(travelSign) {
+        return new Vector2D(-this.dir.y * travelSign, this.dir.x * travelSign);
+    }
+
+    /**
+     * Returns the center point of the right-hand (keep-right) lane for travelSign at parameter t.
+     */
+    getLanePoint(t, travelSign) {
+        const right = this.getRightNormal(travelSign);
+        return new Vector2D(
+            this.nodeA.x + (this.nodeB.x - this.nodeA.x) * t + right.x * this.laneOffset,
+            this.nodeA.y + (this.nodeB.y - this.nodeA.y) * t + right.y * this.laneOffset
         );
     }
 }

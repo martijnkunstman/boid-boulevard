@@ -1,7 +1,7 @@
 /**
  * Boid - Autonomous vehicle agent controlled by a NeuralNetwork and front Sensors.
  * Supports 1 to 4 configurable vehicle archetypes, bidirectional throttle (forward drive & backward braking),
- * and non-collapsing collision physics on a unified single-track road network.
+ * and non-collapsing collision physics on a two-way, keep-right road network.
  */
 class Boid {
     static ARCHETYPES = [
@@ -86,6 +86,10 @@ class Boid {
         this.width = arch.width;
         this.mass = arch.mass;
 
+        // Elliptical collision shape: semi-axis along the heading and across it
+        this.collisionLength = this.length * 0.42;
+        this.collisionWidth = this.width * 0.5 + 1;
+
         this.maxSpeed = properties?.maxSpeed || Boid._randInRange(arch.maxSpeedRange);
         this.maxReverseSpeed = this.maxSpeed * 0.16;
         this.acceleration = properties?.acceleration || Boid._randInRange(arch.accelRange);
@@ -115,6 +119,8 @@ class Boid {
         this.distanceTraveled = 0;
         this.roadCollisions = 0;
         this.boidCollisions = 0;
+        this.headOnCollisions = 0;
+        this.wrongLaneTime = 0;
         this.timeAlive = 0;
         this.stuckTimer = 0;
         this.collisionCooldown = 0;
@@ -234,11 +240,11 @@ class Boid {
             const angleDiff = Vector2D.normalizeAngle(roadState.desiredAngle - this.heading);
             this.heading = Vector2D.normalizeAngle(this.heading + angleDiff * 0.55);
 
-            // Slide smoothly toward the forward roadCenter lookahead so boids never get stuck on corners
+            // Slide smoothly toward the forward lane lookahead point so boids never get stuck on corners
             const slideDist = Math.max(2.0, Math.abs(stepDist) * 0.7);
             const pullToCenter = new Vector2D(
-                roadState.roadCenter.x - this.x,
-                roadState.roadCenter.y - this.y
+                roadState.laneTarget.x - this.x,
+                roadState.laneTarget.y - this.y
             ).normalize();
             const candX = this.x + pullToCenter.x * slideDist;
             const candY = this.y + pullToCenter.y * slideDist;
@@ -246,8 +252,8 @@ class Boid {
                 this.x = candX;
                 this.y = candY;
             } else {
-                this.x = roadState.roadCenter.x;
-                this.y = roadState.roadCenter.y;
+                this.x = roadState.laneTarget.x;
+                this.y = roadState.laneTarget.y;
             }
         }
 
@@ -301,7 +307,8 @@ class Boid {
             const node = roadState.approachingNode;
             const nextRoad = this.plannedNextRoad;
             const sign = nextRoad.nodeA === node ? 1 : -1;
-            const targetPoint = nextRoad.getPointAt(sign === 1 ? 0.28 : 0.72);
+            // Aim for the keep-right lane of the outgoing road
+            const targetPoint = nextRoad.getLanePoint(sign === 1 ? 0.28 : 0.72, sign);
             const desiredAngle = Math.atan2(targetPoint.y - this.y, targetPoint.x - this.x);
             const angleDiff = Vector2D.normalizeAngle(this.heading - desiredAngle);
             return Math.max(-1, Math.min(1, angleDiff / (Math.PI * 0.4)));
@@ -310,13 +317,21 @@ class Boid {
     }
 
     _evaluateFitness(dt, stepDist, roadState, city, allBoids) {
+        // Keep right: left of the centerline is the opposite lane (lane rules are off inside crossings)
+        const inOppositeLane = !roadState.inCrossing && roadState.lateralOffset < 0;
+
         const forwardCos = Math.cos(roadState.angleDiff);
         if (this.speed > 2 && forwardCos > 0.2) {
             const validDist = stepDist * forwardCos;
             this.distanceTraveled += validDist;
-            this.fitness += validDist * 0.25;
+            this.fitness += validDist * 0.25 * (inOppositeLane ? 0.5 : 1);
         } else if (this.speed < -1) {
             this.fitness -= Math.abs(stepDist) * 0.1;
+        }
+
+        if (inOppositeLane && this.speed > 2) {
+            this.wrongLaneTime += dt;
+            this.fitness -= 1.5 * dt;
         }
 
         // Anti-collapse / anti-stall check: if stuck, respawn cleanly
@@ -339,6 +354,17 @@ class Boid {
     }
 
     /**
+     * Radius of this boid's elliptical collision shape in world direction (nx, ny) (unit vector).
+     */
+    _collisionRadiusToward(nx, ny) {
+        const along = this.collisionLength;
+        const across = this.collisionWidth;
+        const cos = Math.cos(this.heading) * nx + Math.sin(this.heading) * ny;
+        const sinSq = Math.max(0, 1 - cos * cos);
+        return (along * across) / Math.sqrt(across * across * cos * cos + along * along * sinSq);
+    }
+
+    /**
      * Resolves pairwise boid-to-boid physical separation so boids NEVER collapse/stack onto each other
      * and never get pushed outside the road boundaries.
      * @param {Boid[]} boids
@@ -353,14 +379,22 @@ class Boid {
 
                 const dx = b.x - a.x;
                 const dy = b.y - a.y;
-                const minDist = (a.length + b.length) * 0.42;
                 const distSq = dx * dx + dy * dy;
 
-                if (distSq < minDist * minDist && distSq > 1e-6) {
-                    const dist = Math.sqrt(distSq);
+                // Quick reject using each boid's largest (lengthwise) collision radius
+                const maxDist = a.collisionLength + b.collisionLength;
+                if (distSq >= maxDist * maxDist || distSq <= 1e-6) continue;
+
+                const dist = Math.sqrt(distSq);
+                const nx = dx / dist;
+                const ny = dy / dist;
+
+                // Orientation-aware contact distance: lengthwise radius front-to-back, widthwise radius
+                // side-by-side, so boids passing in opposite lanes do not count as colliding
+                const minDist = a._collisionRadiusToward(nx, ny) + b._collisionRadiusToward(-nx, -ny);
+
+                if (dist < minDist) {
                     const overlap = (minDist - dist) + 0.5;
-                    const nx = dx / dist;
-                    const ny = dy / dist;
 
                     const totalMass = a.mass + b.mass;
                     const ratioA = b.mass / totalMass;
@@ -381,11 +415,24 @@ class Boid {
                         b.y = nextBY;
                     }
 
-                    // Determine who rear-ended whom and damp velocity
+                    // Determine who rear-ended whom (or a head-on crash) and damp velocity
                     const aForwardDot = Math.cos(a.heading) * nx + Math.sin(a.heading) * ny;
                     const bForwardDot = -(Math.cos(b.heading) * nx + Math.sin(b.heading) * ny);
+                    const headingDot = Math.cos(a.heading - b.heading);
 
-                    if (aForwardDot > bForwardDot) {
+                    if (headingDot < -0.5 && aForwardDot > 0.2 && bForwardDot > 0.2) {
+                        // Head-on: both drove into each other, both are at fault
+                        for (const boid of [a, b]) {
+                            boid.speed *= 0.3;
+                            if (boid.collisionCooldown <= 0) {
+                                boid.boidCollisions++;
+                                boid.headOnCollisions++;
+                                boid.fitness -= 9.0;
+                                boid.collisionCooldown = 0.45;
+                                if (city) city.crashHeat.add(boid.x, boid.y);
+                            }
+                        }
+                    } else if (aForwardDot > bForwardDot) {
                         a.speed = Math.min(a.speed * 0.5, b.speed * 0.85);
                         if (a.collisionCooldown <= 0) {
                             a.boidCollisions++;

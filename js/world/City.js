@@ -241,16 +241,21 @@ class City {
             travelSign = dotDir >= 0 ? 1 : -1;
         }
 
-        // Lookahead point along the road so boids at intersections are pulled forward into the road,
-        // never backward into the intersection corner cap.
+        // Lookahead point in the keep-right lane, so boids at intersections are pulled forward into
+        // their own lane of the road, never backward into the intersection corner cap.
         const lookaheadT = Math.max(0.14, Math.min(0.86, proj.t + travelSign * 0.18));
-        const roadCenter = road.getPointAt(lookaheadT);
+        const laneTarget = road.getLanePoint(lookaheadT, travelSign);
         const travelDir = road.dir.scale(travelSign);
 
-        // Blend road axis angle with angle toward lookahead centerline when off-center
+        // Signed lateral position relative to the centerline (+ = right-hand side of travel direction)
+        const right = road.getRightNormal(travelSign);
+        const lateralOffset = (x - proj.x) * right.x + (y - proj.y) * right.y;
+        const laneError = lateralOffset - road.laneOffset;
+
+        // Blend road axis angle with angle toward the lookahead lane point when off the lane center
         const roadAxisAngle = Math.atan2(travelDir.y, travelDir.x);
-        const toLookaheadAngle = Math.atan2(roadCenter.y - y, roadCenter.x - x);
-        const centerPullWeight = Math.min(0.55, proj.dist / Math.max(1, road.halfWidth));
+        const toLookaheadAngle = Math.atan2(laneTarget.y - y, laneTarget.x - x);
+        const centerPullWeight = Math.min(0.55, Math.abs(laneError) / Math.max(1, road.laneOffset));
         const axisToLookaheadDiff = Vector2D.normalizeAngle(toLookaheadAngle - roadAxisAngle);
         const desiredAngle = Vector2D.normalizeAngle(roadAxisAngle + axisToLookaheadDiff * centerPullWeight);
 
@@ -261,15 +266,22 @@ class City {
         const approachingNode = travelSign > 0 ? road.nodeB : road.nodeA;
         const distToNode = Math.hypot(x - approachingNode.x, y - approachingNode.y);
 
+        // Inside a crossing, lanes of different roads overlap, so lane rules do not apply there
+        const distAlong = proj.t * road.length;
+        const inCrossing = distAlong < road.nodeA.radius || road.length - distAlong < road.nodeB.radius;
+
         return {
             onRoad,
             road,
             t: proj.t,
             distToCenterline: proj.dist,
+            lateralOffset,
+            laneError,
+            inCrossing,
             travelSign,
             travelDir,
             desiredAngle,
-            roadCenter,
+            laneTarget,
             angleDiff,
             headingError,
             approachingNode,
@@ -278,14 +290,14 @@ class City {
     }
 
     /**
-     * Picks a valid random spawn point on a road centerline, well clear of existing boids.
+     * Picks a valid random spawn point in the keep-right lane of a road, well clear of existing boids.
      */
     getRandomSpawnPose(existingBoids = []) {
         for (let attempt = 0; attempt < 40; attempt++) {
             const road = this.roads[Math.floor(Random.next() * this.roads.length)];
             const travelSign = Random.next() < 0.5 ? 1 : -1;
             const t = 0.25 + Random.next() * 0.5;
-            const pos = road.getPointAt(t);
+            const pos = road.getLanePoint(t, travelSign);
             const heading = Math.atan2(road.dir.y * travelSign, road.dir.x * travelSign);
 
             let clear = true;
@@ -349,7 +361,8 @@ class City {
             if (!nodeA || !nodeB) continue;
             if (nodeA.roads.length >= 4 || nodeB.roads.length >= 4) continue;
             const road = new Road(rd.id, nodeA, nodeB, {
-                width: rd.width,
+                // Older saves used narrower single-track roads; widen them to fit two lanes
+                width: Math.max(rd.width || 0, Road.DEFAULT_WIDTH),
                 isDiagonal: rd.isDiagonal,
                 isPerimeter: rd.isPerimeter
             });

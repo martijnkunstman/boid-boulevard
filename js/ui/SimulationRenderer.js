@@ -1,5 +1,5 @@
 /**
- * SimulationRenderer - Renders the flat 2D single-track city road network,
+ * SimulationRenderer - Renders the flat 2D two-way city road network with lane markings,
  * crossings, boids, and front sensor rays onto an HTML5 Canvas.
  */
 class SimulationRenderer {
@@ -64,6 +64,7 @@ class SimulationRenderer {
         // 2. Render road curbs/borders and unified asphalt road surfaces
         this._renderRoadBorders(ctx, city);
         this._renderRoadSurfaces(ctx, city);
+        this._renderLaneMarkings(ctx, city);
 
         // 2b. Optional map overlay (heatmaps or distance field) between roads and boids
         if (this.overlayMode === 'traffic') {
@@ -214,7 +215,7 @@ class SimulationRenderer {
                     r = 255; g = 255; b = 255; a = 255;
                 } else if (d < 0) {
                     // On road: 0 = road center, 0.5 = border
-                    const depth = Math.min(1, -d / 18);
+                    const depth = Math.min(1, -d / (Road.DEFAULT_WIDTH * 0.5));
                     [r, g, b] = SimulationRenderer._rampColor(stops, 0.5 - depth * 0.5);
                     a = 210;
                 } else {
@@ -318,6 +319,28 @@ class SimulationRenderer {
             ctx.lineTo(road.nodeB.x, road.nodeB.y);
             ctx.stroke();
         }
+    }
+
+    /**
+     * Dashed centerline separating the two lanes, stopping at the edge of each crossing.
+     */
+    _renderLaneMarkings(ctx, city) {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(243, 244, 246, 0.75)';
+        ctx.lineWidth = 1.5;
+        ctx.lineCap = 'butt';
+        ctx.setLineDash([9, 9]);
+
+        for (const road of city.roads) {
+            const startGap = road.nodeA.radius + 4;
+            const endGap = road.nodeB.radius + 4;
+            if (road.length <= startGap + endGap) continue;
+            ctx.beginPath();
+            ctx.moveTo(road.nodeA.x + road.dir.x * startGap, road.nodeA.y + road.dir.y * startGap);
+            ctx.lineTo(road.nodeB.x - road.dir.x * endGap, road.nodeB.y - road.dir.y * endGap);
+            ctx.stroke();
+        }
+        ctx.restore();
     }
 
     _renderBoid(ctx, boid, isInspected = false) {
