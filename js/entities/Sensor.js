@@ -1,9 +1,8 @@
 /**
  * Sensor - Front-mounted raycast sensor array for a Boid.
  * Detects:
- *   1. Side of the roads (curbs & intersection edges)
+ *   1. Road borders (curbs & intersection edges)
  *   2. Boids in front
- *   3. Stoplights (traffic lights at upcoming crossings)
  */
 class Sensor {
     /**
@@ -27,7 +26,6 @@ class Sensor {
         // Readings in [0, 1] where 0 = clear/far, 1 = immediate proximity
         this.roadReadings = new Array(this.rayCount).fill(0);
         this.boidReadings = new Array(this.rayCount).fill(0);
-        this.stoplightReading = 0;
         this.closingSpeedReading = 0;
 
         // Ray geometry for visualization
@@ -35,12 +33,11 @@ class Sensor {
     }
 
     /**
-     * Updates all sensor rays against the city road boundaries, other boids, and stoplights.
+     * Updates all sensor rays against the city road boundaries and other boids.
      * @param {City} city
      * @param {Boid[]} boids
-     * @param {object} roadState
      */
-    update(city, boids, roadState) {
+    update(city, boids) {
         const frontOffset = this.boid.length * 0.48;
         const ox = this.boid.x + Math.cos(this.boid.heading) * frontOffset;
         const oy = this.boid.y + Math.sin(this.boid.heading) * frontOffset;
@@ -70,7 +67,7 @@ class Sensor {
             const dx = Math.cos(rayAngle);
             const dy = Math.sin(rayAngle);
 
-            // 1. Sense side of the road
+            // 1. Sense road border
             const roadHit = city.raycastRoadSide(ox, oy, dx, dy, this.rayLength);
             this.roadReadings[i] = roadHit.hit
                 ? Math.max(0, Math.min(1, 1 - roadHit.distance / this.rayLength))
@@ -128,15 +125,5 @@ class Sensor {
         }
 
         this.closingSpeedReading = Math.max(-1, Math.min(1, maxClosingSpeed));
-
-        // 3. Sense stoplight ahead at approaching crossing
-        this.stoplightReading = 0;
-        if (roadState && roadState.trafficLight) {
-            const signalVal = roadState.trafficLight.getSensorSignalValue();
-            if (signalVal > 0 && roadState.distToStopLine <= this.rayLength && roadState.distToNode > roadState.approachingNode.radius - 2) {
-                const proximity = 1 - roadState.distToStopLine / this.rayLength;
-                this.stoplightReading = Math.max(0, Math.min(1, signalVal * (0.25 + 0.75 * proximity)));
-            }
-        }
     }
 }

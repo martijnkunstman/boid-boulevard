@@ -1,6 +1,6 @@
 /**
- * City - Manages the flat 2D road network, intersections, stoplights,
- * spatial road queries, and sensor raycasts against road sides.
+ * City - Manages the flat 2D road network, intersections,
+ * spatial road queries, and sensor raycasts against road borders.
  */
 class City {
     /**
@@ -19,11 +19,7 @@ class City {
     }
 
     update(dt) {
-        for (const node of this.nodes) {
-            if (node.trafficController) {
-                node.trafficController.update(dt);
-            }
-        }
+        // Stateless city road network (stoplights removed)
     }
 
     /**
@@ -60,7 +56,7 @@ class City {
     }
 
     /**
-     * Raycasts from (ox, oy) along unit vector (dx, dy) up to maxDist to find the side of the road.
+     * Raycasts from (ox, oy) along unit vector (dx, dy) up to maxDist to find the road border.
      * Returns { hit: boolean, distance: number, x: number, y: number }.
      */
     raycastRoadSide(ox, oy, dx, dy, maxDist) {
@@ -107,8 +103,8 @@ class City {
     }
 
     /**
-     * Analyzes a boid's position (x, y) and heading to determine its active road, lane offset,
-     * and any approaching stoplight.
+     * Analyzes a boid's position (x, y) and heading to determine its active road, centerline point,
+     * and approaching crossing node.
      */
     queryBoidRoadState(x, y, heading, currentRoad = null) {
         let bestRoad = null;
@@ -168,34 +164,17 @@ class City {
         const dotDir = hx * road.dir.x + hy * road.dir.y;
         const travelSign = dotDir >= 0 ? 1 : -1;
 
-        // Desired right-hand lane center at parameter proj.t
-        const laneCenter = road.getLanePointAt(proj.t, travelSign);
+        const roadCenter = road.getPointAt(proj.t);
         const travelDir = road.dir.scale(travelSign);
-        const rightNorm = new Vector2D(-travelDir.y, travelDir.x);
 
-        // Signed lateral offset from right-hand lane center (+ = too far right toward curb, - = too far left)
-        const dx = x - laneCenter.x;
-        const dy = y - laneCenter.y;
-        const lateralOffset = dx * rightNorm.x + dy * rightNorm.y;
-        const normalizedLateral = Math.max(-1, Math.min(1, lateralOffset / (road.halfWidth * 0.6)));
-
-        // Heading angle error relative to road forward travel direction
+        // Heading angle error relative to road forward travel direction (no left/right lane bias)
         const desiredAngle = Math.atan2(travelDir.y, travelDir.x);
         const angleDiff = Vector2D.normalizeAngle(heading - desiredAngle);
-        const normalizedAngleErr = Math.max(-1, Math.min(1, angleDiff / (Math.PI * 0.5)));
-
-        const laneError = Math.max(-1, Math.min(1, normalizedLateral * 0.55 + normalizedAngleErr * 0.65));
+        const headingError = Math.max(-1, Math.min(1, angleDiff / (Math.PI * 0.5)));
         const onRoad = this.isPointOnRoad(x, y);
 
-        // Approaching node & stoplight check
         const approachingNode = travelSign > 0 ? road.nodeB : road.nodeA;
         const distToNode = Math.hypot(x - approachingNode.x, y - approachingNode.y);
-        const distToStopLine = Math.max(0, distToNode - (approachingNode.radius + 7));
-
-        let trafficLight = null;
-        if (approachingNode.trafficController) {
-            trafficLight = approachingNode.trafficController.getLightForRoad(road);
-        }
 
         return {
             onRoad,
@@ -205,26 +184,23 @@ class City {
             travelSign,
             travelDir,
             desiredAngle,
-            laneCenter,
-            lateralOffset,
+            roadCenter,
             angleDiff,
-            laneError,
+            headingError,
             approachingNode,
-            distToNode,
-            distToStopLine,
-            trafficLight
+            distToNode
         };
     }
 
     /**
-     * Picks a valid random spawn point on a road's right-hand lane, well clear of existing boids.
+     * Picks a valid random spawn point on a road centerline, well clear of existing boids.
      */
     getRandomSpawnPose(existingBoids = []) {
         for (let attempt = 0; attempt < 40; attempt++) {
             const road = this.roads[Math.floor(Math.random() * this.roads.length)];
             const travelSign = Math.random() < 0.5 ? 1 : -1;
             const t = 0.25 + Math.random() * 0.5;
-            const pos = road.getLanePointAt(t, travelSign);
+            const pos = road.getPointAt(t);
             const heading = Math.atan2(road.dir.y * travelSign, road.dir.x * travelSign);
 
             let clear = true;
@@ -293,12 +269,6 @@ class City {
             nodeA.addRoad(road);
             nodeB.addRoad(road);
             roads.push(road);
-        }
-
-        for (const node of nodes) {
-            if (node.roads.length >= 3) {
-                node.trafficController = new IntersectionController(node);
-            }
         }
 
         return new City(data.width, data.height, data.bounds, nodes, roads);

@@ -245,13 +245,6 @@ class CityGenerator {
             addRoad(a, b, {});
         }
 
-        // 5. Initialize stoplights (IntersectionControllers) at all crossings with 3 or 4 roads
-        for (const node of nodes) {
-            if (node.roads.length >= 3) {
-                node.trafficController = new IntersectionController(node);
-            }
-        }
-
         return new City(width, height, rect, nodes, roads);
     }
 

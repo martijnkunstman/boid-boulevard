@@ -1,6 +1,6 @@
 /**
  * RoadNode - Represents an intersection or road junction in the city.
- * Every crossing has at most 4 connected roads and an optional TrafficLight controller.
+ * Every crossing has at most 4 connected roads.
  */
 class RoadNode {
     /**
@@ -16,7 +16,6 @@ class RoadNode {
         this.isPerimeter = isPerimeter;
         this.roads = [];
         this.radius = 20;
-        this.trafficController = null;
     }
 
     /**

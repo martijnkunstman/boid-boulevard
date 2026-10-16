@@ -55,12 +55,11 @@ class ChartScreen {
 
         if (this.complianceCanvas) {
             this._drawLineChart(this.complianceCanvas, data, {
-                title: 'Stoplight Compliance Rate (%)',
+                title: 'Average Population Speed per Generation (px/s)',
                 series: [
-                    { key: 'redLightCompliance', label: 'Red Light Compliance %', color: '#d97706' }
+                    { key: 'avgSpeed', label: 'Avg Speed (px/s)', color: '#d97706' }
                 ],
-                minY: 0,
-                maxY: 100
+                minY: 0
             });
         }
     }
@@ -73,8 +72,7 @@ class ChartScreen {
             let sumFit = 0;
             let sumDist = 0;
             let sumCol = 0;
-            let sumStops = 0;
-            let sumViol = 0;
+            let sumSpeed = 0;
 
             for (const b of liveBoids) {
                 if (b.fitness > bestFit) bestFit = b.fitness;
@@ -82,15 +80,10 @@ class ChartScreen {
                 sumFit += b.fitness;
                 sumDist += b.distanceTraveled;
                 sumCol += (b.roadCollisions + b.boidCollisions);
-                sumStops += b.redLightStops;
-                sumViol += b.redLightViolations;
+                sumSpeed += Math.max(0, b.speed);
             }
 
             const n = liveBoids.length;
-            const totalEvents = sumStops + sumViol * 0.35;
-            const compliance = totalEvents > 0.01
-                ? Math.max(0, Math.min(100, (sumStops / totalEvents) * 100))
-                : 100;
 
             list.push({
                 generation: trainer.generation,
@@ -99,7 +92,7 @@ class ChartScreen {
                 bestDistance: Number(bestDist.toFixed(1)),
                 avgDistance: Number((sumDist / n).toFixed(1)),
                 avgCollisions: Number((sumCol / n).toFixed(2)),
-                redLightCompliance: Number(compliance.toFixed(1)),
+                avgSpeed: Number((sumSpeed / n).toFixed(1)),
                 isLive: true
             });
         }

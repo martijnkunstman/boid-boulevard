@@ -6,9 +6,9 @@
  */
 class NeuralNetwork {
     /**
-     * @param {number[]} layerSizes - Array of neuron counts per layer, e.g. [18, 14, 8, 2]
+     * @param {number[]} layerSizes - Array of neuron counts per layer, e.g. [17, 14, 8, 2]
      */
-    constructor(layerSizes = [18, 14, 8, 2]) {
+    constructor(layerSizes = [17, 14, 8, 2]) {
         this.layerSizes = [...layerSizes];
         this.weights = [];
         this.biases = [];
@@ -44,16 +44,15 @@ class NeuralNetwork {
     }
 
     /**
-     * Seeds a weak initial driving reflex with heavy random variation so initial boids
+     * Seeds a weak initial driving reflex with random variation so initial boids
      * have diverse behaviors without spinning in place on Generation 1.
      *
-     * Input layout (18 inputs):
-     *   0..6   : 7 road-edge rays (left -75 deg to right +75 deg), 1 = close to road side
+     * Input layout (17 inputs):
+     *   0..6   : 7 road-border rays (left -75 deg to right +75 deg), 1 = close to road border
      *   7..13  : 7 boid-ahead rays (left -75 deg to right +75 deg), 1 = close to boid ahead
-     *   14     : stoplight sensor ahead (0 = green/clear, 1 = red light close ahead)
-     *   15     : closing speed with boid ahead (0 = clear, 1 = fast closing)
-     *   16     : current normalized speed
-     *   17     : lane alignment error (-1 = left of lane/angled left, +1 = right of lane/angled right)
+     *   14     : closing speed with boid ahead (0 = clear, 1 = fast closing)
+     *   15     : current normalized speed
+     *   16     : road/turn heading error (-1 = angled left of road, +1 = angled right of road)
      */
     applyInitialReflexBias(strength = 0.45) {
         if (this.layerSizes.length < 2) return;
@@ -61,37 +60,36 @@ class NeuralNetwork {
         const w0 = this.weights[0];
         const b0 = this.biases[0];
 
-        // Neuron 0 in hidden layer 1: Left-obstacle / left-of-lane detector -> steer right (+)
+        // Neuron 0 in hidden layer 1: Left road border / boid detector -> steer right (+)
         if (h0Count > 0) {
-            w0[0][0] += 1.1 * strength;
-            w0[0][1] += 1.0 * strength;
-            w0[0][2] += 0.7 * strength;
-            w0[0][7] += 0.8 * strength;
-            w0[0][8] += 0.7 * strength;
-            w0[0][17] -= 1.35 * strength; // Negative laneError = angled/offset left -> steer right
+            w0[0][0] += 1.2 * strength;
+            w0[0][1] += 1.05 * strength;
+            w0[0][2] += 0.75 * strength;
+            w0[0][7] += 0.85 * strength;
+            w0[0][8] += 0.75 * strength;
+            w0[0][16] -= 1.25 * strength; // Angled left of road -> steer right
         }
-        // Neuron 1 in hidden layer 1: Right-obstacle / right-of-lane detector -> steer left (-)
+        // Neuron 1 in hidden layer 1: Right road border / boid detector -> steer left (-)
         if (h0Count > 1) {
-            w0[1][4] += 0.7 * strength;
-            w0[1][5] += 1.0 * strength;
-            w0[1][6] += 1.1 * strength;
-            w0[1][12] += 0.7 * strength;
-            w0[1][13] += 0.8 * strength;
-            w0[1][17] += 1.35 * strength; // Positive laneError = angled/offset right -> steer left
+            w0[1][4] += 0.75 * strength;
+            w0[1][5] += 1.05 * strength;
+            w0[1][6] += 1.2 * strength;
+            w0[1][12] += 0.75 * strength;
+            w0[1][13] += 0.85 * strength;
+            w0[1][16] += 1.25 * strength; // Angled right of road -> steer left
         }
         // Neuron 2 in hidden layer 1: Cruise drive tendency -> forward throttle (+)
         if (h0Count > 2) {
             b0[2] += 0.95 * strength;
-            w0[2][16] -= 0.35 * strength; // Regulate near max speed
+            w0[2][15] -= 0.35 * strength; // Regulate near max speed
         }
-        // Neuron 3 in hidden layer 1: Front hazard & stoplight brake detector -> backward throttle (-)
+        // Neuron 3 in hidden layer 1: Front hazard brake detector -> backward throttle (-)
         if (h0Count > 3) {
-            w0[3][3] += 0.65 * strength;  // Center road boundary ahead
-            w0[3][9] += 0.85 * strength;  // Front-left boid
-            w0[3][10] += 1.45 * strength; // Center boid directly ahead
-            w0[3][11] += 0.85 * strength; // Front-right boid
-            w0[3][14] += 1.65 * strength; // Red stoplight ahead
-            w0[3][15] += 1.0 * strength;  // Closing speed ahead
+            w0[3][3] += 0.75 * strength;  // Center road border ahead
+            w0[3][9] += 0.9 * strength;   // Front-left boid
+            w0[3][10] += 1.5 * strength;  // Center boid directly ahead
+            w0[3][11] += 0.9 * strength;  // Front-right boid
+            w0[3][14] += 1.1 * strength;  // Closing speed ahead
         }
 
         // Propagate channels through intermediate hidden layers if > 2 layers

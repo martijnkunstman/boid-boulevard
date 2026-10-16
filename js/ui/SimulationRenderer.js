@@ -1,6 +1,6 @@
 /**
- * SimulationRenderer - Renders the flat 2D city road network, stoplight crossings,
- * boids, and front sensor rays onto an HTML5 Canvas.
+ * SimulationRenderer - Renders the flat 2D single-track city road network,
+ * crossings, boids, and front sensor rays onto an HTML5 Canvas.
  */
 class SimulationRenderer {
     /**
@@ -30,19 +30,16 @@ class SimulationRenderer {
 
         this._renderCityBounds(ctx, city);
 
-        // 2. Render road curbs/outlines and asphalt surfaces
+        // 2. Render road curbs/borders and unified asphalt road surfaces
         this._renderRoadBorders(ctx, city);
         this._renderRoadSurfaces(ctx, city);
 
-        // 3. Render stoplights (stop lines & signal boxes) at crossings
-        this._renderTrafficLights(ctx, city);
-
-        // 4. Render all boids
+        // 3. Render all boids
         for (const boid of boids) {
             this._renderBoid(ctx, boid, boid === inspectedBoid);
         }
 
-        // 5. Render front sensor rays for inspected boid (or all boids)
+        // 4. Render front sensor rays for inspected boid (or all boids)
         if (this.showAllSensors) {
             for (const boid of boids) {
                 this._renderBoidSensors(ctx, boid, boid === inspectedBoid);
@@ -92,9 +89,9 @@ class SimulationRenderer {
 
     _renderRoadSurfaces(ctx, city) {
         ctx.lineCap = 'round';
-        ctx.strokeStyle = '#3f4652';
+        ctx.strokeStyle = '#4b5563';
 
-        // Asphalt surface for roads
+        // Unified asphalt surface for roads (no left/right lane divider)
         for (const road of city.roads) {
             ctx.lineWidth = road.width;
             ctx.beginPath();
@@ -104,59 +101,11 @@ class SimulationRenderer {
         }
 
         // Intersection node asphalt surfaces
-        ctx.fillStyle = '#3f4652';
+        ctx.fillStyle = '#4b5563';
         for (const node of city.nodes) {
             ctx.beginPath();
             ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
             ctx.fill();
-        }
-
-        // Center dashed lane dividers on roads
-        ctx.save();
-        ctx.strokeStyle = '#d1d5db';
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([8, 8]);
-        for (const road of city.roads) {
-            const start = road.getPointAt(0.12);
-            const end = road.getPointAt(0.88);
-            ctx.beginPath();
-            ctx.moveTo(start.x, start.y);
-            ctx.lineTo(end.x, end.y);
-            ctx.stroke();
-        }
-        ctx.restore();
-    }
-
-    _renderTrafficLights(ctx, city) {
-        for (const node of city.nodes) {
-            if (!node.trafficController) continue;
-
-            for (const light of node.trafficController.lights) {
-                const color =
-                    light.state === 'GREEN' ? '#22c55e' :
-                    light.state === 'YELLOW' ? '#eab308' : '#ef4444';
-
-                // Draw colored stop line across the incoming lane
-                ctx.save();
-                ctx.strokeStyle = color;
-                ctx.lineWidth = 3.2;
-                ctx.beginPath();
-                ctx.moveTo(light.stopLineStart.x, light.stopLineStart.y);
-                ctx.lineTo(light.stopLineEnd.x, light.stopLineEnd.y);
-                ctx.stroke();
-
-                // Draw traffic signal head on the right-hand curb
-                ctx.fillStyle = '#111827';
-                ctx.beginPath();
-                ctx.arc(light.signalPos.x, light.signalPos.y, 4.5, 0, Math.PI * 2);
-                ctx.fill();
-
-                ctx.fillStyle = color;
-                ctx.beginPath();
-                ctx.arc(light.signalPos.x, light.signalPos.y, 3.0, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.restore();
-            }
         }
     }
 
@@ -216,7 +165,7 @@ class SimulationRenderer {
             } else if (ray.roadHit) {
                 hitX = ray.roadHitX;
                 hitY = ray.roadHitY;
-                color = `rgba(251, 191, 36, ${alpha})`; // Side of road = bright amber
+                color = `rgba(251, 191, 36, ${alpha})`; // Road border = bright amber
             }
 
             ctx.strokeStyle = color;

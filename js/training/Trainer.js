@@ -66,24 +66,17 @@ class Trainer {
         let totalFitness = 0;
         let totalDistance = 0;
         let totalCollisions = 0;
-        let totalViolations = 0;
-        let totalStops = 0;
 
         for (const b of sorted) {
             totalFitness += b.fitness;
             totalDistance += b.distanceTraveled;
             totalCollisions += (b.roadCollisions + b.boidCollisions);
-            totalViolations += b.redLightViolations;
-            totalStops += b.redLightStops;
         }
 
         const avgFitness = totalFitness / count;
         const avgDistance = totalDistance / count;
         const avgCollisions = totalCollisions / count;
-        const totalLightEvents = totalStops + totalViolations * 0.5;
-        const redLightCompliance = totalLightEvents > 0.01
-            ? Math.max(0, Math.min(100, (totalStops / (totalStops + totalViolations * 0.35)) * 100))
-            : 100;
+        const avgSpeed = avgDistance / Math.max(1, this.generationDuration);
 
         if (bestBoid && bestFitness > this.allTimeBestFitness) {
             this.allTimeBestFitness = bestFitness;
@@ -101,7 +94,7 @@ class Trainer {
             bestDistance: Number(bestDistance.toFixed(1)),
             avgDistance: Number(avgDistance.toFixed(1)),
             avgCollisions: Number(avgCollisions.toFixed(2)),
-            redLightCompliance: Number(redLightCompliance.toFixed(1))
+            avgSpeed: Number(avgSpeed.toFixed(1))
         });
 
         // Keep top elites

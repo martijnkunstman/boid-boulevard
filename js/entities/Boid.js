@@ -1,7 +1,7 @@
 /**
  * Boid - Autonomous vehicle agent controlled by a NeuralNetwork and front Sensors.
  * Features varied speeds/archetype properties, bidirectional throttle (forward drive & backward braking),
- * stoplight compliance, and non-collapsing collision physics.
+ * and non-collapsing collision physics on a unified single-track road network.
  */
 class Boid {
     static ARCHETYPES = [
@@ -99,7 +99,7 @@ class Boid {
         if (brain) {
             this.brain = brain.clone();
         } else {
-            this.brain = new NeuralNetwork([18, 14, 8, 2]);
+            this.brain = new NeuralNetwork([17, 14, 8, 2]);
             this.brain.applyInitialReflexBias(0.35 + Math.random() * 0.35);
         }
 
@@ -108,12 +108,10 @@ class Boid {
         this.distanceTraveled = 0;
         this.roadCollisions = 0;
         this.boidCollisions = 0;
-        this.redLightViolations = 0;
-        this.redLightStops = 0;
         this.timeAlive = 0;
         this.stuckTimer = 0;
         this.collisionCooldown = 0;
-        this.lastInputs = new Array(18).fill(0);
+        this.lastInputs = new Array(17).fill(0);
     }
 
     static _randInRange([min, max]) {
@@ -132,7 +130,7 @@ class Boid {
             this.collisionCooldown = Math.max(0, this.collisionCooldown - dt);
         }
 
-        // 1. Query current road, lane, and stoplight state
+        // 1. Query current road state
         const roadState = city.queryBoidRoadState(
             this.x,
             this.y,
@@ -144,20 +142,19 @@ class Boid {
         this._updateIntersectionRouting(roadState);
         this.currentRoad = roadState.road;
 
-        // 2. Update front raycast sensors (road sides, boids in front, stoplight ahead)
-        this.sensor.update(city, allBoids, roadState);
+        // 2. Update front raycast sensors (road borders and boids in front)
+        this.sensor.update(city, allBoids);
 
-        // 3. Build 18-element neural network input vector
+        // 3. Build 17-element neural network input vector
         const normSpeed = Math.max(-1, Math.min(1, this.speed / this.maxSpeed));
-        const effectiveLaneError = this._computeGuidedLaneError(roadState);
+        const effectiveHeadingError = this._computeGuidedHeadingError(roadState);
 
         const inputs = [
-            ...this.sensor.roadReadings,     // 0..6: 7 road-side sensor rays
+            ...this.sensor.roadReadings,     // 0..6: 7 road-border sensor rays
             ...this.sensor.boidReadings,     // 7..13: 7 boids-in-front sensor rays
-            this.sensor.stoplightReading,    // 14: stoplight signal & distance ahead
-            this.sensor.closingSpeedReading, // 15: closing velocity with boid in front
-            normSpeed,                       // 16: current normalized speed
-            effectiveLaneError               // 17: lane / turn alignment error
+            this.sensor.closingSpeedReading, // 14: closing velocity with boid in front
+            normSpeed,                       // 15: current normalized speed
+            effectiveHeadingError            // 16: road/turn heading alignment error
         ];
         this.lastInputs = inputs;
 
@@ -175,7 +172,7 @@ class Boid {
                 // Moving forward: negative throttle acts as braking
                 longitudinalAccel = this.throttleInput * this.brakingForce;
             } else {
-                // Near stop or reversing: gentle reverse throttle or hold brake
+                // Near stop or reversing: gentle reverse throttle
                 longitudinalAccel = this.throttleInput * (this.acceleration * 0.35);
             }
         }
@@ -183,8 +180,8 @@ class Boid {
         const rollingDrag = -this.speed * 0.28;
         this.speed += (longitudinalAccel + rollingDrag) * dt;
 
-        // If braking before a red light or obstacle in front, prevent unwanted reverse creep
-        if (this.sensor.stoplightReading > 0.3 || this.sensor.boidReadings[3] > 0.3) {
+        // If braking for an obstacle directly in front, prevent unwanted reverse creep
+        if (this.sensor.boidReadings[3] > 0.3) {
             if (this.speed < 0) this.speed = 0;
         } else {
             this.speed = Math.max(-this.maxReverseSpeed, Math.min(this.maxSpeed, this.speed));
@@ -209,7 +206,7 @@ class Boid {
             this.x = nextX;
             this.y = nextY;
         } else {
-            // Hit the side of the road (curb)
+            // Hit the border of the road
             if (this.collisionCooldown <= 0) {
                 this.roadCollisions++;
                 this.fitness -= 5.0;
@@ -217,20 +214,20 @@ class Boid {
             }
             this.speed *= 0.65;
 
-            // Deflect boid gently back toward the right-hand lane center and align heading
-            const pullToLane = new Vector2D(
-                roadState.laneCenter.x - this.x,
-                roadState.laneCenter.y - this.y
+            // Deflect boid gently back toward the road centerline and align heading
+            const pullToCenter = new Vector2D(
+                roadState.roadCenter.x - this.x,
+                roadState.roadCenter.y - this.y
             ).normalize();
-            this.x += pullToLane.x * 2.8;
-            this.y += pullToLane.y * 2.8;
+            this.x += pullToCenter.x * 2.8;
+            this.y += pullToCenter.y * 2.8;
 
             const angleDiff = Vector2D.normalizeAngle(roadState.desiredAngle - this.heading);
             this.heading = Vector2D.normalizeAngle(this.heading + angleDiff * 0.48);
         }
 
-        // 9. Stoplight compliance & fitness evaluation
-        this._evaluateFitnessAndTrafficRules(dt, stepDist, roadState, city, allBoids);
+        // 9. Fitness & anti-stall evaluation
+        this._evaluateFitness(dt, stepDist, roadState, city, allBoids);
     }
 
     _updateIntersectionRouting(roadState) {
@@ -261,59 +258,31 @@ class Boid {
         }
     }
 
-    _computeGuidedLaneError(roadState) {
+    _computeGuidedHeadingError(roadState) {
         if (this.plannedNextRoad && roadState.distToNode < roadState.approachingNode.radius + 28) {
             const node = roadState.approachingNode;
             const nextRoad = this.plannedNextRoad;
             const sign = nextRoad.nodeA === node ? 1 : -1;
-            const targetPoint = nextRoad.getLanePointAt(sign === 1 ? 0.3 : 0.7, sign);
+            const targetPoint = nextRoad.getPointAt(sign === 1 ? 0.3 : 0.7);
             const desiredAngle = Math.atan2(targetPoint.y - this.y, targetPoint.x - this.x);
             const angleDiff = Vector2D.normalizeAngle(this.heading - desiredAngle);
             return Math.max(-1, Math.min(1, angleDiff / (Math.PI * 0.4)));
         }
-        return roadState.laneError;
+        return roadState.headingError;
     }
 
-    _evaluateFitnessAndTrafficRules(dt, stepDist, roadState, city, allBoids) {
+    _evaluateFitness(dt, stepDist, roadState, city, allBoids) {
         const forwardCos = Math.cos(roadState.angleDiff);
         if (this.speed > 2 && forwardCos > 0.2) {
             const validDist = stepDist * forwardCos;
             this.distanceTraveled += validDist;
-
-            // Reward forward progress + staying in the right-hand lane
-            const laneBonus = Math.max(0.25, 1 - Math.abs(roadState.lateralOffset) / (roadState.road.halfWidth * 0.65));
-            this.fitness += validDist * 0.25 * laneBonus;
+            this.fitness += validDist * 0.25;
         } else if (this.speed < -1) {
             this.fitness -= Math.abs(stepDist) * 0.1;
         }
 
-        // Check stoplight compliance
-        const light = roadState.trafficLight;
-        const waitingAtRed = light && light.state === 'RED' && roadState.distToStopLine < 26;
-
-        if (waitingAtRed && Math.abs(this.speed) < 10) {
-            // Reward stopping at a red light if the boid is an active driver
-            this.redLightStops += dt;
-            if (this.distanceTraveled > 25 && this.redLightStops < 6.0) {
-                this.fitness += 1.5 * dt;
-            }
-            this.stuckTimer = 0;
-        } else if (
-            light &&
-            light.state === 'RED' &&
-            roadState.distToStopLine < 5 &&
-            roadState.distToNode > roadState.approachingNode.radius - 4 &&
-            this.speed > 25
-        ) {
-            if (this.collisionCooldown <= 0) {
-                this.redLightViolations++;
-                this.fitness -= 8.0;
-                this.collisionCooldown = 0.5;
-            }
-        }
-
-        // Anti-collapse / anti-stall check: if stuck and NOT waiting at a red light, respawn cleanly
-        if (Math.abs(this.speed) < 6 && !waitingAtRed) {
+        // Anti-collapse / anti-stall check: if stuck, respawn cleanly
+        if (Math.abs(this.speed) < 6) {
             this.stuckTimer += dt;
             this.fitness -= 1.2 * dt;
             if (this.stuckTimer > 3.6) {
@@ -377,7 +346,7 @@ class Boid {
                         b.speed = Math.min(b.speed * 0.5, a.speed * 0.85);
                         if (b.collisionCooldown <= 0) {
                             b.boidCollisions++;
-                            b.fitness -= 4.5;
+                            a.fitness -= 4.5;
                             b.collisionCooldown = 0.45;
                         }
                     }
