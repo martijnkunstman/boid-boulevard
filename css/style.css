@@ -154,7 +154,6 @@ label {
 }
 
 #sim-canvas {
-    border: 1px solid #374151;
     max-width: 100%;
     height: auto;
     cursor: pointer;

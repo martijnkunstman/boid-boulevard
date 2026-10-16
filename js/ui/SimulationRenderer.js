@@ -55,11 +55,8 @@ class SimulationRenderer {
         const w = this.canvas.width;
         const h = this.canvas.height;
 
-        // 1. Background & rectangular city boundary enclosure
-        ctx.fillStyle = '#e5e7eb';
-        ctx.fillRect(0, 0, w, h);
-
-        this._renderCityBounds(ctx, city);
+        // 1. Transparent background: only the roads are drawn, the page shows through elsewhere
+        ctx.clearRect(0, 0, w, h);
 
         // 2. Render road curbs/borders and unified asphalt road surfaces
         this._renderRoadBorders(ctx, city);
@@ -272,22 +269,6 @@ class SimulationRenderer {
         ctx.fillText(overlay.low, x + 10, y + 38);
         ctx.textAlign = 'right';
         ctx.fillText(overlay.high, x + 10 + barW, y + 38);
-        ctx.restore();
-    }
-
-    _renderCityBounds(ctx, city) {
-        const b = city.bounds;
-
-        // City block interior turf inside the rectangular boundary
-        ctx.fillStyle = '#dbe4d0';
-        ctx.fillRect(b.left - 24, b.top - 24, b.width + 48, b.height + 48);
-
-        // Rectangular town boundary limit frame (showing no roads exit this rectangle)
-        ctx.save();
-        ctx.strokeStyle = '#6b7280';
-        ctx.lineWidth = 2;
-        ctx.setLineDash([8, 6]);
-        ctx.strokeRect(b.left - 22, b.top - 22, b.width + 44, b.height + 44);
         ctx.restore();
     }
 
