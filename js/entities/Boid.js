@@ -1,7 +1,7 @@
 /**
  * Boid - Autonomous vehicle agent controlled by a NeuralNetwork and front Sensors.
  * Features varied speeds/archetype properties, bidirectional throttle (forward drive & backward braking),
- * elevation/slope physics, stoplight compliance, and non-collapsing collision physics.
+ * stoplight compliance, and non-collapsing collision physics.
  */
 class Boid {
     static ARCHETYPES = [
@@ -57,7 +57,7 @@ class Boid {
 
     /**
      * @param {number} id
-     * @param {object} pose - { x, y, heading, road, layer, elevation }
+     * @param {object} pose - { x, y, heading, road }
      * @param {NeuralNetwork|null} brain
      * @param {object|null} properties
      */
@@ -67,8 +67,6 @@ class Boid {
         this.y = pose.y;
         this.heading = pose.heading || 0;
         this.currentRoad = pose.road || null;
-        this.layer = pose.layer || 0;
-        this.elevation = pose.elevation || 0;
 
         // Assign vehicle archetype and varied physical properties
         const arch = properties?.archetype
@@ -91,7 +89,6 @@ class Boid {
         this.speed = this.maxSpeed * 0.25;
         this.steerInput = 0;
         this.throttleInput = 0;
-        this.currentSlope = 0;
 
         // Navigation & intersection routing memory
         this.plannedNextRoad = null;
@@ -102,7 +99,7 @@ class Boid {
         if (brain) {
             this.brain = brain.clone();
         } else {
-            this.brain = new NeuralNetwork([19, 14, 8, 2]);
+            this.brain = new NeuralNetwork([18, 14, 8, 2]);
             this.brain.applyInitialReflexBias(0.35 + Math.random() * 0.35);
         }
 
@@ -116,7 +113,7 @@ class Boid {
         this.timeAlive = 0;
         this.stuckTimer = 0;
         this.collisionCooldown = 0;
-        this.lastInputs = new Array(19).fill(0);
+        this.lastInputs = new Array(18).fill(0);
     }
 
     static _randInRange([min, max]) {
@@ -135,27 +132,22 @@ class Boid {
             this.collisionCooldown = Math.max(0, this.collisionCooldown - dt);
         }
 
-        // 1. Query current road, lane, elevation, slope, and stoplight state
+        // 1. Query current road, lane, and stoplight state
         const roadState = city.queryBoidRoadState(
             this.x,
             this.y,
             this.heading,
-            this.currentRoad,
-            this.layer
+            this.currentRoad
         );
 
         // Manage intersection routing so boids smoothly transition onto outgoing roads at crossings
         this._updateIntersectionRouting(roadState);
-
         this.currentRoad = roadState.road;
-        this.elevation = roadState.elevation;
-        this.layer = roadState.layer;
-        this.currentSlope = roadState.slope;
 
         // 2. Update front raycast sensors (road sides, boids in front, stoplight ahead)
         this.sensor.update(city, allBoids, roadState);
 
-        // 3. Build 19-element neural network input vector
+        // 3. Build 18-element neural network input vector
         const normSpeed = Math.max(-1, Math.min(1, this.speed / this.maxSpeed));
         const effectiveLaneError = this._computeGuidedLaneError(roadState);
 
@@ -165,8 +157,7 @@ class Boid {
             this.sensor.stoplightReading,    // 14: stoplight signal & distance ahead
             this.sensor.closingSpeedReading, // 15: closing velocity with boid in front
             normSpeed,                       // 16: current normalized speed
-            this.currentSlope,               // 17: road elevation grade (uphill/downhill)
-            effectiveLaneError               // 18: lane / turn alignment error
+            effectiveLaneError               // 17: lane / turn alignment error
         ];
         this.lastInputs = inputs;
 
@@ -189,11 +180,8 @@ class Boid {
             }
         }
 
-        // Apply elevation slope gravity effect (uphill slows boids down, downhill speeds them up)
-        const gravityGradeForce = -this.currentSlope * 26.0 * this.mass;
         const rollingDrag = -this.speed * 0.28;
-
-        this.speed += (longitudinalAccel + gravityGradeForce + rollingDrag) * dt;
+        this.speed += (longitudinalAccel + rollingDrag) * dt;
 
         // If braking before a red light or obstacle in front, prevent unwanted reverse creep
         if (this.sensor.stoplightReading > 0.3 || this.sensor.boidReadings[3] > 0.3) {
@@ -216,12 +204,12 @@ class Boid {
         const nextY = this.y + Math.sin(this.heading) * stepDist;
 
         // 8. Check road boundary & keep boids inside the road network ("do not collapse")
-        const stillOnRoad = city.isPointOnRoad(nextX, nextY, this.currentRoad, this.layer);
+        const stillOnRoad = city.isPointOnRoad(nextX, nextY);
         if (stillOnRoad) {
             this.x = nextX;
             this.y = nextY;
         } else {
-            // Hit the side of the road (curb or bridge guardrail)
+            // Hit the side of the road (curb)
             if (this.collisionCooldown <= 0) {
                 this.roadCollisions++;
                 this.fitness -= 5.0;
@@ -253,7 +241,6 @@ class Boid {
         if (roadState.distToNode < node.radius + 38 && this.lastIntersectionNode !== node) {
             const candidates = node.getConnectedRoadsExcept(roadState.road);
             if (candidates.length > 0) {
-                // Prefer roads that don't require a >130 degree hairpin turn unless necessary
                 const smoothCandidates = candidates.filter(r => {
                     const other = r.getOtherNode(node);
                     const outAngle = Math.atan2(other.y - node.y, other.x - node.x);
@@ -335,8 +322,6 @@ class Boid {
                 this.y = newPose.y;
                 this.heading = newPose.heading;
                 this.currentRoad = newPose.road;
-                this.layer = newPose.layer;
-                this.elevation = newPose.elevation;
                 this.speed = this.maxSpeed * 0.35;
                 this.stuckTimer = 0;
             }
@@ -346,8 +331,7 @@ class Boid {
     }
 
     /**
-     * Resolves pairwise boid-to-boid physical separation on the same height level
-     * so boids NEVER collapse/stack onto each other.
+     * Resolves pairwise boid-to-boid physical separation so boids NEVER collapse/stack onto each other.
      * @param {Boid[]} boids
      */
     static resolveBoidCollisions(boids) {
@@ -356,9 +340,6 @@ class Boid {
             const a = boids[i];
             for (let j = i + 1; j < n; j++) {
                 const b = boids[j];
-
-                // Boids on a bridge vs ground road underneath do not collide
-                if (Math.abs(a.elevation - b.elevation) > 3.5) continue;
 
                 const dx = b.x - a.x;
                 const dy = b.y - a.y;

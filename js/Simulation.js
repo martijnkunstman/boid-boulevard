@@ -166,18 +166,11 @@ class Simulation {
             });
         }
 
-        // Sensor visibility toggles
+        // Sensor visibility toggle
         const chkAllSensors = document.getElementById('chk-all-sensors');
         if (chkAllSensors) {
             chkAllSensors.addEventListener('change', e => {
                 this.renderer.showAllSensors = e.target.checked;
-            });
-        }
-
-        const chkElevLabels = document.getElementById('chk-elev-labels');
-        if (chkElevLabels) {
-            chkElevLabels.addEventListener('change', e => {
-                this.renderer.showElevationLabels = e.target.checked;
             });
         }
 

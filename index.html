@@ -10,7 +10,7 @@
     <header>
         <div class="header-title">
             <h1>Boid Boulevard - City Traffic &amp; Neuroevolution Simulation</h1>
-            <p>Closed rectangular city with diagonal boundary roads, height differences, bridges, stoplights, and neural network boids.</p>
+            <p>Closed rectangular city with diagonal roads, stoplight crossings (&le; 4 roads per crossing), and neural network boids.</p>
         </div>
         <div class="stats-bar">
             <span>Gen: <strong id="stat-gen">1</strong></span>
@@ -47,9 +47,6 @@
             <label>
                 <input type="checkbox" id="chk-all-sensors"> All Sensors
             </label>
-            <label>
-                <input type="checkbox" id="chk-elev-labels" checked> Height Labels
-            </label>
         </div>
 
         <div class="btn-group">
@@ -70,8 +67,6 @@
                 <span><i class="legend-dot" style="background:#059669;"></i>Sedan Boid</span>
                 <span><i class="legend-dot" style="background:#dc2626;"></i>Sports Boid</span>
                 <span><i class="legend-dot" style="background:#d97706;"></i>Heavy Boid</span>
-                <span><i class="legend-dot" style="background:#f59e0b;"></i>Bridge Overpass Guardrail</span>
-                <span><i class="legend-dot" style="background:#829b5f;"></i>Terrain Height Contours</span>
                 <span><strong>Sensors:</strong> Green=Clear, Amber=Road Side, Red=Boid Ahead</span>
             </div>
         </div>
@@ -82,7 +77,7 @@
         <h2>Debug Screen (Live Neural Network, Front Sensors, Telemetry &amp; LocalStorage)</h2>
         <div class="debug-layout">
             <div class="nn-panel">
-                <h3>Neural Network [19 Inputs &rarr; 14 &rarr; 8 &rarr; 2 Outputs (Steer, Throttle/Brake)]</h3>
+                <h3>Neural Network [18 Inputs &rarr; 14 &rarr; 8 &rarr; 2 Outputs (Steer, Throttle/Brake)]</h3>
                 <canvas id="nn-canvas" width="440" height="310"></canvas>
             </div>
             <div id="debug-telemetry"></div>

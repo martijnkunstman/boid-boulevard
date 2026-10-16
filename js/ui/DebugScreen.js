@@ -83,7 +83,7 @@ class DebugScreen {
         const inputLabels = [
             'Road -75°', 'Road -45°', 'Road -22°', 'Road 0°', 'Road +22°', 'Road +45°', 'Road +75°',
             'Boid -75°', 'Boid -45°', 'Boid -22°', 'Boid 0°', 'Boid +22°', 'Boid +45°', 'Boid +75°',
-            'Stoplight', 'ClosingV', 'Speed', 'Slope(Z)', 'LaneErr'
+            'Stoplight', 'ClosingV', 'Speed', 'LaneErr'
         ];
         const outputLabels = ['Steer (L/R)', 'Throttle/Brake'];
 
@@ -130,9 +130,9 @@ class DebugScreen {
         }
 
         const storageInfo = StorageManager.getStorageInfo();
-        const bridgeCount = city.roads.filter(r => r.isBridge).length;
         const diagCount = city.roads.filter(r => r.isDiagonal).length;
         const lightNodeCount = city.nodes.filter(n => n.trafficController).length;
+        const maxRoadsConnected = Math.max(0, ...city.nodes.map(n => n.roads.length));
 
         const steerPct = Math.round(((boid.steerInput + 1) * 0.5) * 100);
         const throttleVal = boid.throttleInput;
@@ -157,8 +157,6 @@ class DebugScreen {
                         <tr><td>Speed / Max Speed:</td><td>${boid.speed.toFixed(1)} / ${boid.maxSpeed.toFixed(1)} px/s</td></tr>
                         <tr><td>Accel / Brake Force:</td><td>${boid.acceleration.toFixed(0)} / ${boid.brakingForce.toFixed(0)}</td></tr>
                         <tr><td>Turn Rate / Mass:</td><td>${boid.turnRate.toFixed(2)} rad/s | ${boid.mass.toFixed(2)}x</td></tr>
-                        <tr><td>Elevation / Layer:</td><td>${boid.elevation.toFixed(1)}m (${boid.layer === 1 ? 'BRIDGE DECK' : 'GROUND'})</td></tr>
-                        <tr><td>Road Grade (Slope):</td><td>${(boid.currentSlope * 100).toFixed(1)}%</td></tr>
                         <tr><td>Collisions (Road / Boid):</td><td>${boid.roadCollisions} / ${boid.boidCollisions}</td></tr>
                         <tr><td>Red Light Stops / Violations:</td><td>${boid.redLightStops.toFixed(1)}s / ${boid.redLightViolations}</td></tr>
                     </table>
@@ -200,7 +198,8 @@ class DebugScreen {
                         <tr><td>All-Time Best Fitness:</td><td>${trainer.allTimeBestFitness > -1e5 ? trainer.allTimeBestFitness.toFixed(1) : '0.0'}</td></tr>
                         <tr><td>Active Boids:</td><td>${allBoids.length}</td></tr>
                         <tr><td>Intersections / Stoplights:</td><td>${city.nodes.length} nodes / ${lightNodeCount} signalized crossings</td></tr>
-                        <tr><td>Roads (Total / Diagonal / Bridges):</td><td>${city.roads.length} total / ${diagCount} diagonal / ${bridgeCount} bridges</td></tr>
+                        <tr><td>Max Roads at Any Crossing:</td><td><strong>${maxRoadsConnected}</strong> (Limit &le; 4)</td></tr>
+                        <tr><td>Roads (Total / Diagonal):</td><td>${city.roads.length} total / ${diagCount} diagonal</td></tr>
                         <tr><td>LocalStorage Saved:</td><td>${storageInfo.hasData ? `Yes (${(storageInfo.sizeBytes / 1024).toFixed(1)} KB at ${storageInfo.savedAt})` : 'Empty'}</td></tr>
                     </table>
                 </div>

@@ -6,9 +6,9 @@
  */
 class NeuralNetwork {
     /**
-     * @param {number[]} layerSizes - Array of neuron counts per layer, e.g. [19, 14, 8, 2]
+     * @param {number[]} layerSizes - Array of neuron counts per layer, e.g. [18, 14, 8, 2]
      */
-    constructor(layerSizes = [19, 14, 8, 2]) {
+    constructor(layerSizes = [18, 14, 8, 2]) {
         this.layerSizes = [...layerSizes];
         this.weights = [];
         this.biases = [];
@@ -47,14 +47,13 @@ class NeuralNetwork {
      * Seeds a weak initial driving reflex with heavy random variation so initial boids
      * have diverse behaviors without spinning in place on Generation 1.
      *
-     * Input layout (19 inputs):
+     * Input layout (18 inputs):
      *   0..6   : 7 road-edge rays (left -75 deg to right +75 deg), 1 = close to road side
      *   7..13  : 7 boid-ahead rays (left -75 deg to right +75 deg), 1 = close to boid ahead
      *   14     : stoplight sensor ahead (0 = green/clear, 1 = red light close ahead)
      *   15     : closing speed with boid ahead (0 = clear, 1 = fast closing)
      *   16     : current normalized speed
-     *   17     : road elevation grade (slope: positive = uphill, negative = downhill)
-     *   18     : lane alignment error (-1 = left of lane/angled left, +1 = right of lane/angled right)
+     *   17     : lane alignment error (-1 = left of lane/angled left, +1 = right of lane/angled right)
      */
     applyInitialReflexBias(strength = 0.45) {
         if (this.layerSizes.length < 2) return;
@@ -69,7 +68,7 @@ class NeuralNetwork {
             w0[0][2] += 0.7 * strength;
             w0[0][7] += 0.8 * strength;
             w0[0][8] += 0.7 * strength;
-            w0[0][18] -= 1.35 * strength; // Negative laneError = angled/offset left -> steer right
+            w0[0][17] -= 1.35 * strength; // Negative laneError = angled/offset left -> steer right
         }
         // Neuron 1 in hidden layer 1: Right-obstacle / right-of-lane detector -> steer left (-)
         if (h0Count > 1) {
@@ -78,13 +77,12 @@ class NeuralNetwork {
             w0[1][6] += 1.1 * strength;
             w0[1][12] += 0.7 * strength;
             w0[1][13] += 0.8 * strength;
-            w0[1][18] += 1.35 * strength; // Positive laneError = angled/offset right -> steer left
+            w0[1][17] += 1.35 * strength; // Positive laneError = angled/offset right -> steer left
         }
         // Neuron 2 in hidden layer 1: Cruise drive tendency -> forward throttle (+)
         if (h0Count > 2) {
             b0[2] += 0.95 * strength;
             w0[2][16] -= 0.35 * strength; // Regulate near max speed
-            w0[2][17] += 0.55 * strength; // Extra throttle on uphill
         }
         // Neuron 3 in hidden layer 1: Front hazard & stoplight brake detector -> backward throttle (-)
         if (h0Count > 3) {

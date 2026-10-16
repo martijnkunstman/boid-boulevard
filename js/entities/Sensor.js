@@ -1,8 +1,8 @@
 /**
  * Sensor - Front-mounted raycast sensor array for a Boid.
  * Detects:
- *   1. Side of the roads (curbs, intersection edges, bridge guardrails)
- *   2. Boids in front (on the same height level)
+ *   1. Side of the roads (curbs & intersection edges)
+ *   2. Boids in front
  *   3. Stoplights (traffic lights at upcoming crossings)
  */
 class Sensor {
@@ -48,7 +48,7 @@ class Sensor {
         this.rays = [];
         let maxClosingSpeed = 0;
 
-        // Pre-filter nearby boids on the same height level
+        // Pre-filter nearby boids
         const maxDistWithRadius = this.rayLength + 20;
         const maxDistSq = maxDistWithRadius * maxDistWithRadius;
         const nearbyBoids = [];
@@ -56,8 +56,6 @@ class Sensor {
         for (let i = 0; i < boids.length; i++) {
             const other = boids[i];
             if (other === this.boid) continue;
-            // Ignore boids on a different elevation layer (e.g. bridge vs ground underneath)
-            if (Math.abs(other.elevation - this.boid.elevation) > 3.6) continue;
 
             const dx = other.x - ox;
             const dy = other.y - oy;
@@ -73,12 +71,7 @@ class Sensor {
             const dy = Math.sin(rayAngle);
 
             // 1. Sense side of the road
-            const roadHit = city.raycastRoadSide(
-                ox, oy, dx, dy,
-                this.rayLength,
-                this.boid.currentRoad,
-                this.boid.layer
-            );
+            const roadHit = city.raycastRoadSide(ox, oy, dx, dy, this.rayLength);
             this.roadReadings[i] = roadHit.hit
                 ? Math.max(0, Math.min(1, 1 - roadHit.distance / this.rayLength))
                 : 0;

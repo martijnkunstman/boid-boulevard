@@ -1,5 +1,5 @@
 /**
- * City - Manages the road network, intersections, stoplights, bridges, heightmap,
+ * City - Manages the flat 2D road network, intersections, stoplights,
  * spatial road queries, and sensor raycasts against road sides.
  */
 class City {
@@ -9,15 +9,13 @@ class City {
      * @param {object} bounds
      * @param {RoadNode[]} nodes
      * @param {Road[]} roads
-     * @param {object[]} hills
      */
-    constructor(width, height, bounds, nodes, roads, hills = []) {
+    constructor(width, height, bounds, nodes, roads) {
         this.width = width;
         this.height = height;
         this.bounds = bounds;
         this.nodes = nodes;
         this.roads = roads;
-        this.hills = hills;
     }
 
     update(dt) {
@@ -29,45 +27,12 @@ class City {
     }
 
     /**
-     * Evaluates terrain elevation (outside or underneath bridges) at any (x, y).
-     */
-    getTerrainElevationAt(x, y) {
-        let z = 0;
-        for (const h of this.hills) {
-            const dx = x - h.x;
-            const dy = y - h.y;
-            const d2 = dx * dx + dy * dy;
-            const r2 = h.radius * h.radius;
-            if (d2 < r2) {
-                const falloff = 1 - d2 / r2;
-                z += h.peak * falloff * falloff;
-            }
-        }
-        return Math.min(14, Math.max(0, z));
-    }
-
-    /**
-     * Checks if point (px, py) is inside the drivable road boundaries, respecting bridge layers.
+     * Checks if point (px, py) is inside the drivable road boundaries.
      * @param {number} px
      * @param {number} py
-     * @param {Road|null} contextRoad - The road the boid is currently on
-     * @param {number} contextLayer - 0 for ground, 1 for elevated bridge span
      * @returns {boolean}
      */
-    isPointOnRoad(px, py, contextRoad = null, contextLayer = 0) {
-        // If on an elevated bridge span (layer 1), only the bridge road itself and its end nodes count
-        if (contextLayer === 1 && contextRoad && contextRoad.isBridge) {
-            const proj = Vector2D.closestPointOnSegment(
-                px, py,
-                contextRoad.nodeA.x, contextRoad.nodeA.y,
-                contextRoad.nodeB.x, contextRoad.nodeB.y
-            );
-            if (proj.dist <= contextRoad.halfWidth) return true;
-            if (Math.hypot(px - contextRoad.nodeA.x, py - contextRoad.nodeA.y) <= contextRoad.nodeA.radius) return true;
-            if (Math.hypot(px - contextRoad.nodeB.x, py - contextRoad.nodeB.y) <= contextRoad.nodeB.radius) return true;
-            return false;
-        }
-
+    isPointOnRoad(px, py) {
         // Check intersection nodes first
         for (let i = 0; i < this.nodes.length; i++) {
             const node = this.nodes[i];
@@ -78,7 +43,7 @@ class City {
             }
         }
 
-        // Check roads compatible with ground/ramp layer
+        // Check road segments
         for (let i = 0; i < this.roads.length; i++) {
             const road = this.roads[i];
             const proj = Vector2D.closestPointOnSegment(
@@ -87,10 +52,6 @@ class City {
                 road.nodeB.x, road.nodeB.y
             );
             if (proj.dist <= road.halfWidth) {
-                // If this is a bridge road's elevated middle span, only allow if contextRoad is this bridge
-                if (road.isBridge && proj.t > 0.18 && proj.t < 0.82 && contextRoad !== road) {
-                    continue;
-                }
                 return true;
             }
         }
@@ -102,7 +63,7 @@ class City {
      * Raycasts from (ox, oy) along unit vector (dx, dy) up to maxDist to find the side of the road.
      * Returns { hit: boolean, distance: number, x: number, y: number }.
      */
-    raycastRoadSide(ox, oy, dx, dy, maxDist, contextRoad = null, contextLayer = 0) {
+    raycastRoadSide(ox, oy, dx, dy, maxDist) {
         const steps = 14;
         const stepDist = maxDist / steps;
         let prevDist = 0;
@@ -112,7 +73,7 @@ class City {
             const px = ox + dx * curDist;
             const py = oy + dy * curDist;
 
-            if (!this.isPointOnRoad(px, py, contextRoad, contextLayer)) {
+            if (!this.isPointOnRoad(px, py)) {
                 // Binary search refinement between prevDist (inside) and curDist (outside)
                 let lo = prevDist;
                 let hi = curDist;
@@ -120,7 +81,7 @@ class City {
                     const mid = (lo + hi) * 0.5;
                     const mx = ox + dx * mid;
                     const my = oy + dy * mid;
-                    if (this.isPointOnRoad(mx, my, contextRoad, contextLayer)) {
+                    if (this.isPointOnRoad(mx, my)) {
                         lo = mid;
                     } else {
                         hi = mid;
@@ -147,21 +108,9 @@ class City {
 
     /**
      * Analyzes a boid's position (x, y) and heading to determine its active road, lane offset,
-     * elevation, layer, slope, and any approaching stoplight.
+     * and any approaching stoplight.
      */
-    queryBoidRoadState(x, y, heading, currentRoad = null, currentLayer = 0) {
-        // If currently on an elevated bridge deck, stay locked to that bridge until reaching the ramp ends
-        if (currentRoad && currentRoad.isBridge && currentLayer === 1) {
-            const proj = Vector2D.closestPointOnSegment(
-                x, y,
-                currentRoad.nodeA.x, currentRoad.nodeA.y,
-                currentRoad.nodeB.x, currentRoad.nodeB.y
-            );
-            if (proj.t > 0.12 && proj.t < 0.88 && proj.dist <= currentRoad.halfWidth + 14) {
-                return this._buildRoadStateForProjection(x, y, heading, currentRoad, proj);
-            }
-        }
-
+    queryBoidRoadState(x, y, heading, currentRoad = null) {
         let bestRoad = null;
         let bestProj = null;
         let bestScore = Infinity;
@@ -174,17 +123,11 @@ class City {
                 road.nodeB.x, road.nodeB.y
             );
 
-            // Prevent ground traffic from snapping up onto a crossing bridge deck mid-span
-            if (road.isBridge && proj.t > 0.22 && proj.t < 0.78 && currentRoad !== road) {
-                continue;
-            }
-
             // Continuity bonus for currentRoad and alignment bonus when inside an intersection
             let score = proj.dist - road.halfWidth;
             if (road === currentRoad) {
                 score -= 5.0;
             } else if (currentRoad) {
-                // Check if road shares a node with currentRoad
                 const sharesNode =
                     road.nodeA === currentRoad.nodeA ||
                     road.nodeA === currentRoad.nodeB ||
@@ -195,7 +138,6 @@ class City {
                 }
             }
 
-            // Heading alignment bonus when inside road/intersection
             const hx = Math.cos(heading);
             const hy = Math.sin(heading);
             const align = Math.abs(hx * road.dir.x + hy * road.dir.y);
@@ -231,7 +173,7 @@ class City {
         const travelDir = road.dir.scale(travelSign);
         const rightNorm = new Vector2D(-travelDir.y, travelDir.x);
 
-        // Signed lateral offset from right-hand lane center (+ = too far right toward curb, - = too far left toward oncoming lane)
+        // Signed lateral offset from right-hand lane center (+ = too far right toward curb, - = too far left)
         const dx = x - laneCenter.x;
         const dy = y - laneCenter.y;
         const lateralOffset = dx * rightNorm.x + dy * rightNorm.y;
@@ -243,11 +185,7 @@ class City {
         const normalizedAngleErr = Math.max(-1, Math.min(1, angleDiff / (Math.PI * 0.5)));
 
         const laneError = Math.max(-1, Math.min(1, normalizedLateral * 0.55 + normalizedAngleErr * 0.65));
-
-        const onRoad = this.isPointOnRoad(x, y, road, road.getLayerAt(proj.t));
-        const elevation = road.getElevationAt(proj.t);
-        const layer = road.getLayerAt(proj.t);
-        const slope = road.getSlopeAt(proj.t, travelSign);
+        const onRoad = this.isPointOnRoad(x, y);
 
         // Approaching node & stoplight check
         const approachingNode = travelSign > 0 ? road.nodeB : road.nodeA;
@@ -271,9 +209,6 @@ class City {
             lateralOffset,
             angleDiff,
             laneError,
-            elevation,
-            layer,
-            slope,
             approachingNode,
             distToNode,
             distToStopLine,
@@ -291,12 +226,10 @@ class City {
             const t = 0.25 + Math.random() * 0.5;
             const pos = road.getLanePointAt(t, travelSign);
             const heading = Math.atan2(road.dir.y * travelSign, road.dir.x * travelSign);
-            const elevation = road.getElevationAt(t);
-            const layer = road.getLayerAt(t);
 
             let clear = true;
             for (const other of existingBoids) {
-                if (Math.abs(other.layer - layer) === 0 && Math.hypot(other.x - pos.x, other.y - pos.y) < 28) {
+                if (Math.hypot(other.x - pos.x, other.y - pos.y) < 28) {
                     clear = false;
                     break;
                 }
@@ -307,9 +240,7 @@ class City {
                     x: pos.x,
                     y: pos.y,
                     heading,
-                    road,
-                    layer,
-                    elevation
+                    road
                 };
             }
         }
@@ -320,12 +251,10 @@ class City {
             width: this.width,
             height: this.height,
             bounds: this.bounds,
-            hills: this.hills,
             nodes: this.nodes.map(n => ({
                 id: n.id,
                 x: n.x,
                 y: n.y,
-                elevation: n.elevation,
                 isPerimeter: n.isPerimeter
             })),
             roads: this.roads.map(r => ({
@@ -333,10 +262,8 @@ class City {
                 nodeAId: r.nodeA.id,
                 nodeBId: r.nodeB.id,
                 width: r.width,
-                isBridge: r.isBridge,
                 isDiagonal: r.isDiagonal,
-                isPerimeter: r.isPerimeter,
-                bridgeDeckHeight: r.bridgeDeckHeight
+                isPerimeter: r.isPerimeter
             }))
         };
     }
@@ -347,7 +274,7 @@ class City {
         }
         const nodeMap = new Map();
         const nodes = data.nodes.map(nd => {
-            const node = new RoadNode(nd.id, nd.x, nd.y, nd.elevation, nd.isPerimeter);
+            const node = new RoadNode(nd.id, nd.x, nd.y, nd.isPerimeter);
             nodeMap.set(nd.id, node);
             return node;
         });
@@ -357,12 +284,11 @@ class City {
             const nodeA = nodeMap.get(rd.nodeAId);
             const nodeB = nodeMap.get(rd.nodeBId);
             if (!nodeA || !nodeB) continue;
+            if (nodeA.roads.length >= 4 || nodeB.roads.length >= 4) continue;
             const road = new Road(rd.id, nodeA, nodeB, {
                 width: rd.width,
-                isBridge: rd.isBridge,
                 isDiagonal: rd.isDiagonal,
-                isPerimeter: rd.isPerimeter,
-                bridgeDeckHeight: rd.bridgeDeckHeight
+                isPerimeter: rd.isPerimeter
             });
             nodeA.addRoad(road);
             nodeB.addRoad(road);
@@ -375,6 +301,6 @@ class City {
             }
         }
 
-        return new City(data.width, data.height, data.bounds, nodes, roads, data.hills || []);
+        return new City(data.width, data.height, data.bounds, nodes, roads);
     }
 }

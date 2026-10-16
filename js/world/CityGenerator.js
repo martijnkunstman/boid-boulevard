@@ -1,20 +1,22 @@
 /**
- * CityGenerator - Randomly generates a self-contained city road network within a rectangular boundary:
+ * CityGenerator - Randomly generates a clean, flat 2D city road network within a rectangular boundary:
  *  - Rectangular perimeter limited by diagonal corner roads (no roads leading out of the city)
- *  - Grid streets + internal diagonal avenues
- *  - Height differences (hills/valleys across the city)
- *  - Bridge overpasses where roads cross each other at different heights
+ *  - Clean, less complicated layout with spacious blocks
+ *  - Internal diagonal roads and orthogonal streets
+ *  - Strictly enforces <= 4 connected roads at every crossing
  *  - Crossings equipped with multi-phase stoplights (TrafficLights)
  */
 class CityGenerator {
+    static MAX_ROADS_PER_NODE = 4;
+
     /**
      * @param {number} width - Canvas/world width
      * @param {number} height - Canvas/world height
      * @returns {City}
      */
-    static generate(width = 1000, height = 660) {
-        const marginX = 64;
-        const marginY = 54;
+    static generate(width = 1020, height = 620) {
+        const marginX = 74;
+        const marginY = 60;
         const rect = {
             left: marginX,
             top: marginY,
@@ -24,28 +26,11 @@ class CityGenerator {
             height: height - marginY * 2
         };
 
-        // 1. Generate smooth terrain elevation hills/ridges for height differences
-        const hills = CityGenerator._generateElevationHills(rect);
-        const sampleTerrainElevation = (x, y) => {
-            let z = 0;
-            for (const h of hills) {
-                const dx = x - h.x;
-                const dy = y - h.y;
-                const d2 = dx * dx + dy * dy;
-                const r2 = h.radius * h.radius;
-                if (d2 < r2) {
-                    const falloff = 1 - d2 / r2;
-                    z += h.peak * falloff * falloff;
-                }
-            }
-            return Math.round(Math.min(14, Math.max(0, z)) * 10) / 10;
-        };
-
-        // 2. Build a 5x4 grid of candidate coordinates inside the rectangle
-        const cols = 5;
+        // Build a clean 4x4 grid of base positions (omitting the 4 extreme corners)
+        const cols = 4;
         const rows = 4;
-        const colWeights = CityGenerator._randomPartition(cols - 1, 0.22);
-        const rowWeights = CityGenerator._randomPartition(rows - 1, 0.22);
+        const colWeights = CityGenerator._randomPartition(cols - 1, 0.27);
+        const rowWeights = CityGenerator._randomPartition(rows - 1, 0.27);
 
         const colX = [rect.left];
         for (let c = 0; c < colWeights.length; c++) {
@@ -69,7 +54,7 @@ class CityGenerator {
             (c === 0 && r === rows - 1) ||
             (c === cols - 1 && r === rows - 1);
 
-        // Create nodes (omitting the 4 extreme corners so diagonal roads limit the town corners within the rectangle)
+        // 1. Create nodes (omitting the 4 corners so diagonal roads limit the town corners within the rectangle)
         for (let c = 0; c < cols; c++) {
             for (let r = 0; r < rows; r++) {
                 if (isCorner(c, r)) continue;
@@ -78,14 +63,13 @@ class CityGenerator {
                 let x = colX[c];
                 let y = rowY[r];
 
-                // Slight organic jitter for interior intersections
+                // Gentle organic variation for interior intersections
                 if (!onBoundary) {
-                    x += (Math.random() * 2 - 1) * 14;
-                    y += (Math.random() * 2 - 1) * 12;
+                    x += (Math.random() * 2 - 1) * 18;
+                    y += (Math.random() * 2 - 1) * 14;
                 }
 
-                const elev = sampleTerrainElevation(x, y);
-                const node = new RoadNode(nextNodeId++, x, y, elev, onBoundary);
+                const node = new RoadNode(nextNodeId++, x, y, onBoundary);
                 nodes.push(node);
                 gridNodes[c][r] = node;
             }
@@ -95,12 +79,82 @@ class CityGenerator {
         let nextRoadId = 1;
         const roadKeySet = new Set();
 
-        const addRoad = (nodeA, nodeB, options = {}) => {
-            if (!nodeA || !nodeB || nodeA === nodeB) return null;
+        /**
+         * Validates that adding a road between nodeA and nodeB:
+         *  1. Never exceeds 4 roads on either node
+         *  2. Does not duplicate an existing road
+         *  3. Does not geometrically cross any existing road
+         *  4. Maintains a clean minimum angle (>= 30 deg) with existing roads at both nodes
+         */
+        const canAddRoad = (nodeA, nodeB) => {
+            if (!nodeA || !nodeB || nodeA === nodeB) return false;
+            if (nodeA.roads.length >= CityGenerator.MAX_ROADS_PER_NODE) return false;
+            if (nodeB.roads.length >= CityGenerator.MAX_ROADS_PER_NODE) return false;
+
             const key = nodeA.id < nodeB.id
                 ? `${nodeA.id}-${nodeB.id}`
                 : `${nodeB.id}-${nodeA.id}`;
-            if (roadKeySet.has(key)) return null;
+            if (roadKeySet.has(key)) return false;
+
+            // Check minimum angle at nodeA and nodeB so roads never overlap at acute angles
+            const minAngleRad = 0.52; // ~30 degrees
+            const angleAB = Math.atan2(nodeB.y - nodeA.y, nodeB.x - nodeA.x);
+            for (const r of nodeA.roads) {
+                const other = r.getOtherNode(nodeA);
+                const existingAngle = Math.atan2(other.y - nodeA.y, other.x - nodeA.x);
+                if (Math.abs(Vector2D.normalizeAngle(angleAB - existingAngle)) < minAngleRad) {
+                    return false;
+                }
+            }
+
+            const angleBA = Math.atan2(nodeA.y - nodeB.y, nodeA.x - nodeB.x);
+            for (const r of nodeB.roads) {
+                const other = r.getOtherNode(nodeB);
+                const existingAngle = Math.atan2(other.y - nodeB.y, other.x - nodeB.x);
+                if (Math.abs(Vector2D.normalizeAngle(angleBA - existingAngle)) < minAngleRad) {
+                    return false;
+                }
+            }
+
+            // Ensure segment AB does not intersect any existing road segment
+            for (const existing of roads) {
+                if (
+                    existing.nodeA === nodeA || existing.nodeA === nodeB ||
+                    existing.nodeB === nodeA || existing.nodeB === nodeB
+                ) {
+                    continue;
+                }
+                const hit = Vector2D.segmentIntersection(
+                    nodeA.x, nodeA.y,
+                    nodeB.x, nodeB.y,
+                    existing.nodeA.x, existing.nodeA.y,
+                    existing.nodeB.x, existing.nodeB.y,
+                    0.01
+                );
+                if (hit) return false;
+            }
+
+            // Ensure segment AB does not pass right through another node's radius
+            for (const otherNode of nodes) {
+                if (otherNode === nodeA || otherNode === nodeB) continue;
+                const proj = Vector2D.closestPointOnSegment(
+                    otherNode.x, otherNode.y,
+                    nodeA.x, nodeA.y,
+                    nodeB.x, nodeB.y
+                );
+                if (proj.t > 0.05 && proj.t < 0.95 && proj.dist < otherNode.radius + 22) {
+                    return false;
+                }
+            }
+
+            return true;
+        };
+
+        const addRoad = (nodeA, nodeB, options = {}) => {
+            if (!canAddRoad(nodeA, nodeB)) return null;
+            const key = nodeA.id < nodeB.id
+                ? `${nodeA.id}-${nodeB.id}`
+                : `${nodeB.id}-${nodeA.id}`;
             roadKeySet.add(key);
 
             const road = new Road(nextRoadId++, nodeA, nodeB, options);
@@ -110,138 +164,115 @@ class CityGenerator {
             return road;
         };
 
-        // 3. Connect outer boundary: rectangular sides + 4 diagonal corner-limiting roads
-        // Top boundary (c = 1 .. cols-2, r = 0)
-        for (let c = 1; c < cols - 2; c++) {
-            addRoad(gridNodes[c][0], gridNodes[c + 1][0], { isPerimeter: true });
-        }
-        // Bottom boundary (c = 1 .. cols-2, r = rows-1)
-        for (let c = 1; c < cols - 2; c++) {
-            addRoad(gridNodes[c][rows - 1], gridNodes[c + 1][rows - 1], { isPerimeter: true });
-        }
-        // Left boundary (c = 0, r = 1 .. rows-2)
-        for (let r = 1; r < rows - 2; r++) {
-            addRoad(gridNodes[0][r], gridNodes[0][r + 1], { isPerimeter: true });
-        }
-        // Right boundary (c = cols-1, r = 1 .. rows-2)
-        for (let r = 1; r < rows - 2; r++) {
-            addRoad(gridNodes[cols - 1][r], gridNodes[cols - 1][r + 1], { isPerimeter: true });
-        }
+        // 2. Connect the outer perimeter ring: straight boundary edges + 4 diagonal corner roads
+        // Top & Bottom straight edges
+        addRoad(gridNodes[1][0], gridNodes[2][0], { isPerimeter: true });
+        addRoad(gridNodes[1][3], gridNodes[2][3], { isPerimeter: true });
+        // Left & Right straight edges
+        addRoad(gridNodes[0][1], gridNodes[0][2], { isPerimeter: true });
+        addRoad(gridNodes[3][1], gridNodes[3][2], { isPerimeter: true });
 
-        // 4 Diagonal roads limiting the corners of the town rectangle
+        // 4 Diagonal corner roads limiting the town within the rectangle
         addRoad(gridNodes[1][0], gridNodes[0][1], { isPerimeter: true, isDiagonal: true });
-        addRoad(gridNodes[cols - 2][0], gridNodes[cols - 1][1], { isPerimeter: true, isDiagonal: true });
-        addRoad(gridNodes[0][rows - 2], gridNodes[1][rows - 1], { isPerimeter: true, isDiagonal: true });
-        addRoad(gridNodes[cols - 1][rows - 2], gridNodes[cols - 2][rows - 1], { isPerimeter: true, isDiagonal: true });
+        addRoad(gridNodes[2][0], gridNodes[3][1], { isPerimeter: true, isDiagonal: true });
+        addRoad(gridNodes[0][2], gridNodes[1][3], { isPerimeter: true, isDiagonal: true });
+        addRoad(gridNodes[3][2], gridNodes[2][3], { isPerimeter: true, isDiagonal: true });
 
-        // 4. Connect internal horizontal and vertical streets
-        for (let c = 0; c < cols; c++) {
-            for (let r = 0; r < rows; r++) {
-                const curr = gridNodes[c][r];
-                if (!curr) continue;
+        // 3. Add internal diagonal roads first so they are featured cleanly in the city
+        const n11 = gridNodes[1][1];
+        const n21 = gridNodes[2][1];
+        const n12 = gridNodes[1][2];
+        const n22 = gridNodes[2][2];
 
-                // Horizontal interior segments
-                if (c + 1 < cols && r > 0 && r < rows - 1 && gridNodes[c + 1][r]) {
-                    // Keep nearly all interior grid streets for rich connectivity, occasionally skip 1 for variety
-                    addRoad(curr, gridNodes[c + 1][r], {});
-                }
-                // Vertical interior segments
-                if (r + 1 < rows && c > 0 && c < cols - 1 && gridNodes[c][r + 1]) {
-                    addRoad(curr, gridNodes[c][r + 1], {});
+        if (Math.random() < 0.5) {
+            // Pattern A: Central 4-way diagonal crossing node in the middle of the town
+            const cx = (n11.x + n21.x + n12.x + n22.x) * 0.25;
+            const cy = (n11.y + n21.y + n12.y + n22.y) * 0.25;
+            const centerNode = new RoadNode(nextNodeId++, cx, cy, false);
+            nodes.push(centerNode);
+
+            addRoad(n11, centerNode, { isDiagonal: true });
+            addRoad(centerNode, n22, { isDiagonal: true });
+            addRoad(n21, centerNode, { isDiagonal: true });
+            addRoad(centerNode, n12, { isDiagonal: true });
+        } else {
+            // Pattern B: Diagonal avenue across the center block + 1 outer block diagonal
+            if (Math.random() < 0.5) {
+                addRoad(n11, n22, { isDiagonal: true });
+            } else {
+                addRoad(n21, n12, { isDiagonal: true });
+            }
+
+            // Pick 1 outer block for an additional diagonal road
+            const outerDiagPairs = [
+                [gridNodes[1][0], n21],
+                [gridNodes[2][0], n11],
+                [n12, gridNodes[2][3]],
+                [n22, gridNodes[1][3]],
+                [gridNodes[0][1], n12],
+                [n21, gridNodes[3][2]]
+            ];
+            CityGenerator._shuffle(outerDiagPairs);
+            for (const [a, b] of outerDiagPairs) {
+                if (addRoad(a, b, { isDiagonal: true })) {
+                    break;
                 }
             }
         }
 
-        // 5. Add internal diagonal roads & Bridge Overpasses across interior city blocks!
-        // Candidate interior blocks are (c, r) for c in [1..cols-3], r in [0..rows-2] where all 4 corners exist
-        const candidateBlocks = [];
-        for (let c = 0; c < cols - 1; c++) {
-            for (let r = 0; r < rows - 1; r++) {
-                const n00 = gridNodes[c][r];
-                const n10 = gridNodes[c + 1][r];
-                const n01 = gridNodes[c][r + 1];
-                const n11 = gridNodes[c + 1][r + 1];
-                if (n00 && n10 && n01 && n11) {
-                    candidateBlocks.push({ c, r, n00, n10, n01, n11 });
-                }
-            }
+        // 4. Add orthogonal grid streets connecting perimeter to interior and interior nodes together
+        // All candidate orthogonal links
+        const orthogonalCandidates = [
+            // Spokes from perimeter to interior nodes
+            [gridNodes[1][0], n11],
+            [gridNodes[2][0], n21],
+            [gridNodes[0][1], n11],
+            [gridNodes[0][2], n12],
+            [gridNodes[3][1], n21],
+            [gridNodes[3][2], n22],
+            [gridNodes[1][3], n12],
+            [gridNodes[2][3], n22],
+            // Inner box orthogonal streets
+            [n11, n21],
+            [n12, n22],
+            [n11, n12],
+            [n21, n22]
+        ];
+
+        // Shuffle so different crossings get 3 or 4 roads each time while never exceeding 4 roads
+        CityGenerator._shuffle(orthogonalCandidates);
+        for (const [a, b] of orthogonalCandidates) {
+            addRoad(a, b, {});
         }
 
-        // Shuffle candidate blocks randomly
-        for (let i = candidateBlocks.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [candidateBlocks[i], candidateBlocks[j]] = [candidateBlocks[j], candidateBlocks[i]];
-        }
-
-        let bridgeCount = 0;
-        for (let i = 0; i < candidateBlocks.length; i++) {
-            const blk = candidateBlocks[i];
-            if (i < 3) {
-                // Create a pair of crossing diagonal roads where ONE is a ground road and ONE is a BRIDGE OVERPASS!
-                const firstIsMainDiag = (i % 2 === 0);
-                if (firstIsMainDiag) {
-                    addRoad(blk.n00, blk.n11, { isDiagonal: true, isBridge: false });
-                    addRoad(blk.n10, blk.n01, { isDiagonal: true, isBridge: true, bridgeDeckHeight: 8.5 });
-                } else {
-                    addRoad(blk.n10, blk.n01, { isDiagonal: true, isBridge: false });
-                    addRoad(blk.n00, blk.n11, { isDiagonal: true, isBridge: true, bridgeDeckHeight: 8.5 });
-                }
-                bridgeCount++;
-            } else if (i === 3) {
-                // Create a central diagonal X-crossing at ground level WITH a shared stoplight intersection node!
-                const ix = (blk.n00.x + blk.n10.x + blk.n01.x + blk.n11.x) * 0.25;
-                const iy = (blk.n00.y + blk.n10.y + blk.n01.y + blk.n11.y) * 0.25;
-                const iElev = sampleTerrainElevation(ix, iy);
-                const centerNode = new RoadNode(nextNodeId++, ix, iy, iElev, false);
-                nodes.push(centerNode);
-                addRoad(blk.n00, centerNode, { isDiagonal: true });
-                addRoad(centerNode, blk.n11, { isDiagonal: true });
-                addRoad(blk.n10, centerNode, { isDiagonal: true });
-                addRoad(centerNode, blk.n01, { isDiagonal: true });
-            } else if (i <= 5) {
-                // Single diagonal avenue across the block
-                if (Math.random() < 0.5) {
-                    addRoad(blk.n00, blk.n11, { isDiagonal: true });
-                } else {
-                    addRoad(blk.n10, blk.n01, { isDiagonal: true });
-                }
-            }
-        }
-
-        // 6. Initialize stoplights (IntersectionControllers) at all crossings with >= 3 roads
+        // 5. Initialize stoplights (IntersectionControllers) at all crossings with 3 or 4 roads
         for (const node of nodes) {
             if (node.roads.length >= 3) {
                 node.trafficController = new IntersectionController(node);
             }
         }
 
-        return new City(width, height, rect, nodes, roads, hills);
+        return new City(width, height, rect, nodes, roads);
     }
 
-    static _randomPartition(parts, minShare = 0.2) {
+    static _shuffle(arr) {
+        for (let i = arr.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [arr[i], arr[j]] = [arr[j], arr[i]];
+        }
+        return arr;
+    }
+
+    static _randomPartition(parts, minShare = 0.25) {
         const raw = [];
         let sum = 0;
         for (let i = 0; i < parts; i++) {
-            const v = 0.65 + Math.random() * 0.7;
+            const v = 0.75 + Math.random() * 0.5;
             raw.push(v);
             sum += v;
         }
         const weights = raw.map(v => Math.max(minShare, v / sum));
         const normSum = weights.reduce((a, b) => a + b, 0);
         return weights.map(w => w / normSum);
-    }
-
-    static _generateElevationHills(rect) {
-        const hills = [];
-        const count = 3;
-        for (let i = 0; i < count; i++) {
-            hills.push({
-                x: rect.left + (0.18 + Math.random() * 0.64) * rect.width,
-                y: rect.top + (0.18 + Math.random() * 0.64) * rect.height,
-                radius: 170 + Math.random() * 130,
-                peak: 5.5 + Math.random() * 6.5
-            });
-        }
-        return hills;
     }
 }

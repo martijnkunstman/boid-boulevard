@@ -1,6 +1,6 @@
 /**
- * Road - Represents a two-way city road segment connecting two RoadNodes.
- * Supports ground-level roads with height differences as well as elevated bridges (overpasses).
+ * Road - Represents a flat, two-way city road segment connecting two RoadNodes.
+ * Supports orthogonal and diagonal road geometry.
  */
 class Road {
     /**
@@ -13,13 +13,11 @@ class Road {
         this.id = id;
         this.nodeA = nodeA;
         this.nodeB = nodeB;
-        this.width = options.width || 34;
+        this.width = options.width || 36;
         this.halfWidth = this.width * 0.5;
         this.laneOffset = this.width * 0.25;
-        this.isBridge = Boolean(options.isBridge);
         this.isDiagonal = Boolean(options.isDiagonal);
         this.isPerimeter = Boolean(options.isPerimeter);
-        this.bridgeDeckHeight = options.bridgeDeckHeight || 7.5;
 
         this.recalculateGeometry();
     }
@@ -42,58 +40,6 @@ class Road {
 
     getOtherNode(node) {
         return node === this.nodeA ? this.nodeB : this.nodeA;
-    }
-
-    /**
-     * Bridge ramp profile factor in [0, 1] for parameter t in [0, 1].
-     */
-    getBridgeProfile(t) {
-        if (!this.isBridge) return 0;
-        const rampStart = 0.08;
-        const deckStart = 0.24;
-        const deckEnd = 0.76;
-        const rampEnd = 0.92;
-
-        if (t <= rampStart || t >= rampEnd) return 0;
-        if (t >= deckStart && t <= deckEnd) return 1;
-        if (t < deckStart) {
-            const u = (t - rampStart) / (deckStart - rampStart);
-            return 0.5 - 0.5 * Math.cos(u * Math.PI);
-        }
-        const u = (rampEnd - t) / (rampEnd - deckEnd);
-        return 0.5 - 0.5 * Math.cos(u * Math.PI);
-    }
-
-    /**
-     * Returns elevation (in meters) at normalized parameter t in [0, 1] from nodeA to nodeB.
-     */
-    getElevationAt(t) {
-        const clampedT = Math.max(0, Math.min(1, t));
-        const baseZ = this.nodeA.elevation + (this.nodeB.elevation - this.nodeA.elevation) * clampedT;
-        if (!this.isBridge) return baseZ;
-        return baseZ + this.bridgeDeckHeight * this.getBridgeProfile(clampedT);
-    }
-
-    /**
-     * Returns discrete layer (0 = ground/ramp, 1 = elevated bridge span) at parameter t.
-     */
-    getLayerAt(t) {
-        if (!this.isBridge) return 0;
-        return (t > 0.16 && t < 0.84) ? 1 : 0;
-    }
-
-    /**
-     * Returns road slope (grade) in [-1, 1] at parameter t for travel direction (+1: A->B, -1: B->A).
-     */
-    getSlopeAt(t, travelSign = 1) {
-        const delta = 0.03;
-        const t1 = Math.max(0, t - delta);
-        const t2 = Math.min(1, t + delta);
-        const dz = this.getElevationAt(t2) - this.getElevationAt(t1);
-        const ds = Math.max(1, (t2 - t1) * this.length);
-        // Scale to roughly [-1, 1] for physics & neural network input
-        const grade = (dz / ds) * 8.0 * travelSign;
-        return Math.max(-1, Math.min(1, grade));
     }
 
     /**

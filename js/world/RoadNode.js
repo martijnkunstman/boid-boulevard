@@ -1,31 +1,37 @@
 /**
  * RoadNode - Represents an intersection or road junction in the city.
- * Includes elevation (height differences) and optional TrafficLight controller.
+ * Every crossing has at most 4 connected roads and an optional TrafficLight controller.
  */
 class RoadNode {
     /**
      * @param {number} id
      * @param {number} x
      * @param {number} y
-     * @param {number} elevation - Terrain height at this node (in meters, e.g. 0..14)
      * @param {boolean} isPerimeter - Whether this node lies on the outer city boundary
      */
-    constructor(id, x, y, elevation = 0, isPerimeter = false) {
+    constructor(id, x, y, isPerimeter = false) {
         this.id = id;
         this.x = x;
         this.y = y;
-        this.elevation = elevation;
         this.isPerimeter = isPerimeter;
         this.roads = [];
         this.radius = 20;
         this.trafficController = null;
     }
 
+    /**
+     * Adds a road to this node if it has fewer than 4 roads connected.
+     * @param {Road} road
+     * @returns {boolean}
+     */
     addRoad(road) {
+        if (this.roads.length >= 4) return false;
         if (!this.roads.includes(road)) {
             this.roads.push(road);
-            this.radius = Math.max(20, this.roads.length >= 4 ? 23 : 20);
+            this.radius = this.roads.length === 4 ? 22 : 20;
+            return true;
         }
+        return false;
     }
 
     get position() {
@@ -33,7 +39,7 @@ class RoadNode {
     }
 
     /**
-     * Returns connected roads except the given road, sorted by angle.
+     * Returns connected roads except the given road.
      */
     getConnectedRoadsExcept(excludedRoad) {
         return this.roads.filter(r => r !== excludedRoad);
