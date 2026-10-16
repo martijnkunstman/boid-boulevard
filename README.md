@@ -37,6 +37,7 @@
   - Configurable generation duration (`15s`, `30s`, `45s`, `60s`).
 - **Automatic Persistence (`localStorage`)**
   - Automatically saves the city map, generation counter, elite neural networks, and historical chart metrics after every generation.
+  - Chart history keeps at most `500` points: when that is exceeded, every other point is removed (back to ~`250`), so the charts always show the complete run from generation 1 at a coarser resolution for older generations.
   - Includes a **Restart & Clear Local Storage** button to wipe saved data and start fresh.
 - **Three Built-In Screens**
   1. **City Simulation Screen**: Interactive canvas view of the city, boids, and raycast sensors (click any boid to inspect it).

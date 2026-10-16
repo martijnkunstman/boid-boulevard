@@ -177,6 +177,15 @@ class ChartScreen {
 
         if (data.length === 0) return;
 
+        // X position by generation number (not array index), so a compacted history
+        // with uneven point spacing still shows the whole run to scale
+        const firstGen = data[0].generation;
+        const lastGen = data[data.length - 1].generation;
+        const genSpan = lastGen - firstGen;
+        const xForPoint = i => (genSpan > 0
+            ? padLeft + ((data[i].generation - firstGen) / genSpan) * plotW
+            : padLeft + plotW * 0.5);
+
         // Draw each series
         for (const ser of config.series) {
             ctx.strokeStyle = ser.color;
@@ -184,9 +193,7 @@ class ChartScreen {
             ctx.beginPath();
 
             for (let i = 0; i < data.length; i++) {
-                const x = data.length === 1
-                    ? padLeft + plotW * 0.5
-                    : padLeft + (i / (data.length - 1)) * plotW;
+                const x = xForPoint(i);
                 const val = data[i][ser.key] || 0;
                 const normY = (val - minVal) / (maxVal - minVal);
                 const y = padTop + plotH - Math.max(0, Math.min(1, normY)) * plotH;
@@ -198,9 +205,7 @@ class ChartScreen {
 
             // Draw data points
             for (let i = 0; i < data.length; i++) {
-                const x = data.length === 1
-                    ? padLeft + plotW * 0.5
-                    : padLeft + (i / (data.length - 1)) * plotW;
+                const x = xForPoint(i);
                 const val = data[i][ser.key] || 0;
                 const normY = (val - minVal) / (maxVal - minVal);
                 const y = padTop + plotH - Math.max(0, Math.min(1, normY)) * plotH;
@@ -216,8 +221,6 @@ class ChartScreen {
         ctx.fillStyle = '#374151';
         ctx.font = '10px monospace';
         ctx.textAlign = 'center';
-        const firstGen = data[0].generation;
-        const lastGen = data[data.length - 1].generation;
         ctx.fillText(`Gen ${firstGen}`, padLeft + 16, h - 8);
         if (data.length > 1) {
             ctx.fillText(`Gen ${lastGen} (live)`, w - padRight - 34, h - 8);

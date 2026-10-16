@@ -3,6 +3,9 @@
  * over generations, tracks historical metrics for charts, and preserves elite brains.
  */
 class Trainer {
+    // Maximum number of generation history points kept (in memory and in localStorage)
+    static HISTORY_MAX_POINTS = 500;
+
     /**
      * @param {object} config
      */
@@ -110,6 +113,7 @@ class Trainer {
             avgCollisions: Number(avgCollisions.toFixed(2)),
             avgSpeed: Number(avgSpeed.toFixed(1))
         });
+        this._compactHistory();
 
         // Keep top elites
         const eliteCount = Math.max(4, Math.floor(this.populationSize * 0.12));
@@ -169,6 +173,17 @@ class Trainer {
         return nextBoids;
     }
 
+    /**
+     * Keeps the history within HISTORY_MAX_POINTS without dropping the start of the run:
+     * once the limit is exceeded, every odd-indexed point is removed, halving the history
+     * (500 -> ~250) while keeping the first generation and the most recent one.
+     */
+    _compactHistory() {
+        while (this.history.length > Trainer.HISTORY_MAX_POINTS) {
+            this.history = this.history.filter((_, i) => i % 2 === 0);
+        }
+    }
+
     _tournamentSelect(sortedBoids, k = 4) {
         const poolSize = Math.max(2, Math.floor(sortedBoids.length * 0.55));
         let best = null;
@@ -210,7 +225,7 @@ class Trainer {
             allTimeBestArchetype: this.allTimeBestArchetype,
             allTimeBestBrain: this.allTimeBestBrain ? this.allTimeBestBrain.serialize() : null,
             eliteBrains: this.eliteBrains.map(b => b.serialize()),
-            history: this.history.slice(-150)
+            history: this.history
         };
     }
 
@@ -231,5 +246,6 @@ class Trainer {
             ? data.eliteBrains.map(b => NeuralNetwork.deserialize(b))
             : [];
         this.history = Array.isArray(data.history) ? data.history : [];
+        this._compactHistory();
     }
 }
