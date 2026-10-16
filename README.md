@@ -30,7 +30,10 @@
   - Hard road-border containment and iterative pairwise circle-circle collision resolution keep boids from overlapping or escaping the road network.
 - **High-Speed & Decoupled "Turbo" Training**
   - Fixed-timestep (`1/60s`) physics loop supports `1x`, `2x`, `4x`, `8x`, `16x`, `32x`, and `64x` speed multipliers without physics tunneling.
-  - **Turbo (Skip Render)** mode decouples visualization from physics, skipping intermediate canvas redraws and rendering once per completed generation for maximum training throughput.
+  - **Turbo (Skip Render)** mode decouples visualization from physics: each animation frame runs as many physics steps as fit in a `14 ms` time budget (instead of a fixed count) and renders the canvas only once per completed generation, so any physics speedup directly becomes training throughput.
+- **Signed Distance Field Road Queries**
+  - On creation, each city precomputes a `2 px` grid of signed distances to the nearest road border (~160 KB, built in under 1 ms).
+  - On-road checks are a single bilinear lookup, and road-border sensor rays use sphere tracing over the field instead of fixed-step sampling, making road raycasts 2-3x faster and more accurate.
   - Configurable generation duration (`15s`, `30s`, `45s`, `60s`).
 - **Automatic Persistence (`localStorage`)**
   - Automatically saves the city map, generation counter, elite neural networks, and historical chart metrics after every generation.
@@ -79,7 +82,7 @@ boid-boulevard/
     ├── world/
     │   ├── RoadNode.js         # Intersection / waypoint node
     │   ├── Road.js             # Unified single-track road segment & AABB geometry
-    │   ├── City.js             # City graph, boundary containment & road queries
+    │   ├── City.js             # City graph, road distance field (SDF) & road queries
     │   └── CityGenerator.js    # Procedural closed rectangular city generator
     ├── entities/
     │   ├── Sensor.js           # 7-ray road border & boid ahead raycaster

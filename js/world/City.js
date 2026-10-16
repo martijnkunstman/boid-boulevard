@@ -3,6 +3,10 @@
  * spatial road queries, and sensor raycasts against road borders.
  */
 class City {
+    // Signed distance field grid: cell size in px, and the clamp value stored far away from any road
+    static SDF_CELL_SIZE = 2;
+    static SDF_FAR_DISTANCE = 8;
+
     /**
      * @param {number} width
      * @param {number} height
@@ -18,6 +22,81 @@ class City {
         this.nodes = nodes;
         this.roads = roads;
         this.seed = String(seed);
+
+        this._buildDistanceField();
+    }
+
+    /**
+     * Precomputes a grid of signed distances to the nearest road border (negative = on road).
+     * The drivable area is the union of road capsules, so each cell stores min(capsuleDist - halfWidth).
+     * Only cells near a road are evaluated; all others keep the positive SDF_FAR_DISTANCE clamp,
+     * since only the sign matters off-road.
+     */
+    _buildDistanceField() {
+        const cell = City.SDF_CELL_SIZE;
+        const far = City.SDF_FAR_DISTANCE;
+        const cols = Math.ceil(this.width / cell) + 1;
+        const rows = Math.ceil(this.height / cell) + 1;
+        const field = new Float32Array(cols * rows).fill(far);
+
+        for (const road of this.roads) {
+            const ax = road.nodeA.x;
+            const ay = road.nodeA.y;
+            const abx = road.nodeB.x - ax;
+            const aby = road.nodeB.y - ay;
+            const abLenSq = abx * abx + aby * aby;
+            const hw = road.halfWidth;
+            const margin = hw + far;
+
+            const c0 = Math.max(0, Math.floor((Math.min(ax, ax + abx) - margin) / cell));
+            const c1 = Math.min(cols - 1, Math.ceil((Math.max(ax, ax + abx) + margin) / cell));
+            const r0 = Math.max(0, Math.floor((Math.min(ay, ay + aby) - margin) / cell));
+            const r1 = Math.min(rows - 1, Math.ceil((Math.max(ay, ay + aby) + margin) / cell));
+
+            for (let r = r0; r <= r1; r++) {
+                const py = r * cell;
+                for (let c = c0; c <= c1; c++) {
+                    const px = c * cell;
+                    let t = abLenSq > 1e-8 ? ((px - ax) * abx + (py - ay) * aby) / abLenSq : 0;
+                    if (t < 0) t = 0;
+                    else if (t > 1) t = 1;
+                    const dx = px - ax - abx * t;
+                    const dy = py - ay - aby * t;
+                    const dist = Math.sqrt(dx * dx + dy * dy) - hw;
+                    const idx = r * cols + c;
+                    if (dist < field[idx]) {
+                        field[idx] = dist;
+                    }
+                }
+            }
+        }
+
+        this.sdfCols = cols;
+        this.sdfRows = rows;
+        this.sdfInvCell = 1 / cell;
+        this.sdf = field;
+    }
+
+    /**
+     * Bilinearly samples the signed distance to the nearest road border at (px, py).
+     * Negative inside the drivable road area, positive outside. Points outside the grid count as off-road.
+     */
+    sampleRoadDistance(px, py) {
+        const gx = px * this.sdfInvCell;
+        const gy = py * this.sdfInvCell;
+        const cols = this.sdfCols;
+        if (gx < 0 || gy < 0 || gx >= cols - 1 || gy >= this.sdfRows - 1) {
+            return City.SDF_FAR_DISTANCE;
+        }
+        const c = gx | 0;
+        const r = gy | 0;
+        const fx = gx - c;
+        const fy = gy - r;
+        const i = r * cols + c;
+        const f = this.sdf;
+        const top = f[i] + (f[i + 1] - f[i]) * fx;
+        const bottom = f[i + cols] + (f[i + cols + 1] - f[i + cols]) * fx;
+        return top + (bottom - top) * fy;
     }
 
     update(dt) {
@@ -28,65 +107,37 @@ class City {
      * Checks if point (px, py) is inside the drivable road boundaries.
      * Road segments are round-capped capsules of radius road.halfWidth, so intersections
      * are completely flush and smooth without sticking-out bulges.
+     * Uses the precomputed signed distance field (O(1) per query).
      * @param {number} px
      * @param {number} py
      * @returns {boolean}
      */
     isPointOnRoad(px, py) {
-        for (let i = 0; i < this.roads.length; i++) {
-            const road = this.roads[i];
-            if (px < road.minX || px > road.maxX || py < road.minY || py > road.maxY) {
-                continue;
-            }
-            const proj = Vector2D.closestPointOnSegment(
-                px, py,
-                road.nodeA.x, road.nodeA.y,
-                road.nodeB.x, road.nodeB.y
-            );
-            if (proj.dist <= road.halfWidth) {
-                return true;
-            }
-        }
-        return false;
+        return this.sampleRoadDistance(px, py) <= 0;
     }
 
     /**
      * Raycasts from (ox, oy) along unit vector (dx, dy) up to maxDist to find the road border.
+     * Sphere-traces the signed distance field: inside the road, |distance| never exceeds the true
+     * distance to the border, so each step can safely advance by it without skipping past an edge.
      * Returns { hit: boolean, distance: number, x: number, y: number }.
      */
     raycastRoadSide(ox, oy, dx, dy, maxDist) {
-        const steps = 14;
-        const stepDist = maxDist / steps;
-        let prevDist = 0;
+        const hitEpsilon = 0.4;
+        const minStep = 0.6;
+        let t = 0;
 
-        for (let s = 1; s <= steps; s++) {
-            const curDist = s * stepDist;
-            const px = ox + dx * curDist;
-            const py = oy + dy * curDist;
-
-            if (!this.isPointOnRoad(px, py)) {
-                // Binary search refinement between prevDist (inside) and curDist (outside)
-                let lo = prevDist;
-                let hi = curDist;
-                for (let b = 0; b < 4; b++) {
-                    const mid = (lo + hi) * 0.5;
-                    const mx = ox + dx * mid;
-                    const my = oy + dy * mid;
-                    if (this.isPointOnRoad(mx, my)) {
-                        lo = mid;
-                    } else {
-                        hi = mid;
-                    }
-                }
-                const hitDist = (lo + hi) * 0.5;
+        for (let i = 0; i < 48 && t < maxDist; i++) {
+            const dist = this.sampleRoadDistance(ox + dx * t, oy + dy * t);
+            if (dist > -hitEpsilon) {
                 return {
                     hit: true,
-                    distance: hitDist,
-                    x: ox + dx * hitDist,
-                    y: oy + dy * hitDist
+                    distance: t,
+                    x: ox + dx * t,
+                    y: oy + dy * t
                 };
             }
-            prevDist = curDist;
+            t += Math.max(-dist, minStep);
         }
 
         return {

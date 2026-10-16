@@ -3,6 +3,9 @@
  * StorageManager, SimulationRenderer, DebugScreen, and ChartScreen.
  */
 class Simulation {
+    // Milliseconds of physics per animation frame in Turbo mode (leaves headroom for the browser at 60 fps)
+    static TURBO_FRAME_BUDGET_MS = 14;
+
     constructor() {
         this.simCanvas = document.getElementById('sim-canvas');
         this.nnCanvas = document.getElementById('nn-canvas');
@@ -351,12 +354,23 @@ class Simulation {
 
         if (!this.isPaused) {
             const fixedStep = 1 / 60;
-            // In Turbo mode, run at least 48 steps per frame (or simSpeed if higher)
-            const steps = this.turboMode ? Math.max(48, this.simSpeed) : this.simSpeed;
 
-            for (let s = 0; s < steps; s++) {
-                if (this._stepSimulation(fixedStep)) {
-                    genCompletedThisFrame = true;
+            if (this.turboMode) {
+                // Turbo: run as many physics steps as fit in the frame's time budget,
+                // so any speedup in the simulation directly becomes training throughput.
+                const deadline = performance.now() + Simulation.TURBO_FRAME_BUDGET_MS;
+                do {
+                    for (let s = 0; s < 4; s++) {
+                        if (this._stepSimulation(fixedStep)) {
+                            genCompletedThisFrame = true;
+                        }
+                    }
+                } while (performance.now() < deadline);
+            } else {
+                for (let s = 0; s < this.simSpeed; s++) {
+                    if (this._stepSimulation(fixedStep)) {
+                        genCompletedThisFrame = true;
+                    }
                 }
             }
         }
