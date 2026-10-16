@@ -26,20 +26,22 @@ class ChartScreen {
 
         if (this.fitnessCanvas) {
             this._drawLineChart(this.fitnessCanvas, data, {
-                title: 'Fitness Progression (Best vs Average)',
+                title: 'Fitness per Generation',
                 series: [
-                    { key: 'bestFitness', label: 'Best Fitness', color: '#16a34a' },
-                    { key: 'avgFitness', label: 'Avg Fitness', color: '#2563eb' }
+                    { key: 'bestFitness', label: 'Best', color: '#16a34a' },
+                    { key: 'avgFitness', label: 'Avg', color: '#2563eb' },
+                    { key: 'benchmarkFitness', label: 'Benchmark', color: '#f97316' }
                 ]
             });
         }
 
         if (this.distanceCanvas) {
             this._drawLineChart(this.distanceCanvas, data, {
-                title: 'Distance Traveled per Generation (px)',
+                title: 'Distance per Generation (px)',
                 series: [
-                    { key: 'bestDistance', label: 'Best Distance', color: '#9333ea' },
-                    { key: 'avgDistance', label: 'Avg Distance', color: '#0284c7' }
+                    { key: 'bestDistance', label: 'Best', color: '#9333ea' },
+                    { key: 'avgDistance', label: 'Avg', color: '#0284c7' },
+                    { key: 'benchmarkDistance', label: 'Benchmark', color: '#f97316' }
                 ]
             });
         }
@@ -135,9 +137,13 @@ class ChartScreen {
         let minVal = config.minY !== undefined ? config.minY : Infinity;
         let maxVal = config.maxY !== undefined ? config.maxY : -Infinity;
 
+        // Points without a value for a series (e.g. benchmark on older history or the live point) are skipped
+        const hasValue = (item, key) => Number.isFinite(item[key]);
+
         for (const item of data) {
             for (const ser of config.series) {
-                const v = item[ser.key] || 0;
+                if (!hasValue(item, ser.key)) continue;
+                const v = item[ser.key];
                 if (config.minY === undefined && v < minVal) minVal = v;
                 if (config.maxY === undefined && v > maxVal) maxVal = v;
             }
@@ -192,21 +198,25 @@ class ChartScreen {
             ctx.lineWidth = 2;
             ctx.beginPath();
 
+            let started = false;
             for (let i = 0; i < data.length; i++) {
+                if (!hasValue(data[i], ser.key)) continue;
                 const x = xForPoint(i);
-                const val = data[i][ser.key] || 0;
+                const val = data[i][ser.key];
                 const normY = (val - minVal) / (maxVal - minVal);
                 const y = padTop + plotH - Math.max(0, Math.min(1, normY)) * plotH;
 
-                if (i === 0) ctx.moveTo(x, y);
+                if (!started) ctx.moveTo(x, y);
                 else ctx.lineTo(x, y);
+                started = true;
             }
             ctx.stroke();
 
             // Draw data points
             for (let i = 0; i < data.length; i++) {
+                if (!hasValue(data[i], ser.key)) continue;
                 const x = xForPoint(i);
-                const val = data[i][ser.key] || 0;
+                const val = data[i][ser.key];
                 const normY = (val - minVal) / (maxVal - minVal);
                 const y = padTop + plotH - Math.max(0, Math.min(1, normY)) * plotH;
 

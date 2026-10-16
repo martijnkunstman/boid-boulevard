@@ -9,7 +9,7 @@
 <body>
     <header>
         <div class="header-title">
-            <h1>Boid Boulevard - City Traffic &amp; Neuroevolution Simulation <span class="app-version" title="Application version">v1.5.0</span></h1>
+            <h1>Boid Boulevard - City Traffic &amp; Neuroevolution Simulation <span class="app-version" title="Application version">v1.6.0</span></h1>
             <p>Closed rectangular city with two-way keep-right roads, diagonal roads, crossings (&le; 4 roads per crossing), and neural network boids.</p>
         </div>
         <div class="stats-bar">
@@ -50,6 +50,9 @@
             </label>
             <label title="Skip canvas rendering between generations for maximum training throughput">
                 <input type="checkbox" id="chk-turbo"> Turbo (Skip Render)
+            </label>
+            <label title="Train on a new random city every 10 generations, so networks learn to drive instead of memorizing one map">
+                <input type="checkbox" id="chk-rotate-city" checked> Rotate City (10 gens)
             </label>
             <label>
                 Run Duration:

@@ -52,7 +52,7 @@
 
      Heatmaps fade by half at the end of every generation, so they reflect recent driving behavior.
   2. **Debug Screen**: Live neural network topology & synapse activation visualizer, steering/throttle gauges, sensor readouts, and city/storage diagnostics.
-  3. **Training Progress Charts Screen**: Multi-generation line charts for Best/Average Fitness, Average Distance Traveled, Average Collisions, and Average Population Speed.
+  3. **Training Progress Charts Screen**: Multi-generation line charts for Best/Average/Benchmark Fitness, Best/Average/Benchmark Distance Traveled, Average Collisions, and Average Population Speed.
 
 ---
 
@@ -70,10 +70,17 @@ Each generation runs for a fixed duration (default `30s`, or `1,800` physics ste
   - Idling or stalling below `6 px/s` (`-1.2 / sec`); a boid stuck for more than `3.6s` is respawned at a new location
   - Driving in reverse (`-0.1` per pixel reversed)
 
-At the end of a generation, `Trainer` ranks all boids by fitness:
-1. **Elitism**: The top 12% of brains (at least 4; 6 with the default population of 55), including the all-time best brain, are copied unchanged into the next generation.
-2. **Tournament Selection & Crossover**: Parents are picked by tournament selection (`k = 4`) from the top 55% of the population and combined via neuron-wise and per-weight crossover.
-3. **Gaussian Mutation**: Offspring weights and biases receive random perturbations (`mutationRate = 0.14`, `mutationStrength = 0.24`), clamped to `[-3.5, 3.5]`. The last 6 slots are fine-tuned copies of the top 3 brains with smaller mutations.
+Generations start from **evenly spread spawn positions** (spaced along all roads, alternating directions, randomly assigned to boids) instead of independent random spots, so fewer boids get an unusually easy or hard start.
+
+At the end of a generation, `Trainer` ranks all boids by the **average score of their network over its last 5 evaluations** (a network keeps its score history only while it is copied unchanged; crossover or mutation starts a new one). A one-off lucky run therefore cannot dominate: unchanged elites are re-evaluated every generation and fall back if they were only lucky.
+1. **Champion**: The network with the best average over at least `3` evaluations becomes the champion and is re-inserted unchanged (slot 0). It is re-evaluated every generation, so a better-performing network can take over. The header's "All-Time Best" shows the best champion average reached so far.
+2. **Elitism**: The top 12% of networks by average score (at least 4; 6 with the default population of 55), including the champion, are copied unchanged into the next generation.
+3. **Tournament Selection & Crossover**: Parents are picked by tournament selection (`k = 4`, on average score) from the top 55% of the population and combined via neuron-wise and per-weight crossover.
+4. **Gaussian Mutation**: Offspring weights and biases receive random perturbations (`mutationRate = 0.14`, `mutationStrength = 0.24`), clamped to `[-3.5, 3.5]`. The last 6 slots are fine-tuned copies of the top 3 networks with smaller mutations.
+
+**City rotation** (checkbox "Rotate City", on by default): every `10` generations training continues on a new random city, so networks learn to drive rather than memorizing one map. The new city's seed comes from the seeded generator, so a run stays reproducible.
+
+**Benchmark ("driving test")**: after every generation the top `10` networks drive for `15 s` on a fixed benchmark city with fixed spawns and vehicle properties (its own seed, without disturbing the training run). Because the conditions are identical every generation, the orange **Benchmark** line in the fitness and distance charts shows real progress, while the best/average lines include luck and city changes.
 
 ---
 

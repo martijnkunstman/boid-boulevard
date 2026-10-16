@@ -17,6 +17,24 @@ class Random {
     }
 
     /**
+     * Captures the current generator state, so a side computation (e.g. the training benchmark)
+     * can use its own seed without disturbing the main random sequence.
+     * @returns {{seed: string, state: number}}
+     */
+    static saveState() {
+        return { seed: Random.currentSeed, state: Random._state };
+    }
+
+    /**
+     * Restores a state captured with saveState().
+     * @param {{seed: string, state: number}} saved
+     */
+    static restoreState(saved) {
+        Random.currentSeed = saved.seed;
+        Random._state = saved.state;
+    }
+
+    /**
      * Generates a new random 6-digit seed string using native Math.random().
      * @returns {string}
      */

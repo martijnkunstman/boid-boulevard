@@ -288,6 +288,42 @@ class City {
     }
 
     /**
+     * Returns `count` spawn poses spread evenly over the middle 60% of all roads (by length), alternating
+     * travel directions, starting at a random offset. Compared with independent random spawns this avoids
+     * clumps and empty stretches, so a boid's score depends less on a lucky or unlucky start.
+     * @param {number} count
+     */
+    getSpawnPoses(count) {
+        const usable = this.roads.map(road => road.length * 0.6);
+        const total = usable.reduce((a, b) => a + b, 0);
+        const spacing = total / Math.max(1, count);
+        let pos = Random.next() * spacing;
+        let roadIndex = 0;
+        let roadStart = 0;
+        const poses = [];
+
+        for (let i = 0; i < count; i++) {
+            while (roadIndex < this.roads.length - 1 && pos > roadStart + usable[roadIndex]) {
+                roadStart += usable[roadIndex];
+                roadIndex++;
+            }
+            const road = this.roads[roadIndex];
+            const t = Math.min(0.8, 0.2 + (pos - roadStart) / road.length);
+            const travelSign = i % 2 === 0 ? 1 : -1;
+            const point = road.getLanePoint(t, travelSign);
+            poses.push({
+                x: point.x,
+                y: point.y,
+                heading: Math.atan2(road.dir.y * travelSign, road.dir.x * travelSign),
+                road,
+                travelSign
+            });
+            pos += spacing;
+        }
+        return poses;
+    }
+
+    /**
      * Picks a valid random spawn point in the keep-right lane of a road, well clear of existing boids.
      */
     getRandomSpawnPose(existingBoids = []) {

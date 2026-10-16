@@ -87,6 +87,10 @@ class Simulation {
         if (selectDuration) {
             selectDuration.value = String(Math.round(this.trainer.generationDuration));
         }
+        const chkRotateCity = document.getElementById('chk-rotate-city');
+        if (chkRotateCity) {
+            chkRotateCity.checked = this.trainer.rotateCities;
+        }
     }
 
     /**
@@ -115,13 +119,15 @@ class Simulation {
         const typesCount = selectTypes ? parseInt(selectTypes.value, 10) || 2 : 2;
         const selectDuration = document.getElementById('select-gen-duration');
         const genDuration = selectDuration ? parseInt(selectDuration.value, 10) || 30 : 30;
+        const chkRotateCity = document.getElementById('chk-rotate-city');
 
         this.trainer = new Trainer({
             populationSize: popSize,
             boidTypesCount: typesCount,
             generationDuration: genDuration,
             mutationRate: 0.14,
-            mutationStrength: 0.24
+            mutationStrength: 0.24,
+            rotateCities: chkRotateCity ? chkRotateCity.checked : true
         });
 
         const newSeed = Random.generateSeedString();
@@ -154,10 +160,7 @@ class Simulation {
      * Immediately finishes the current generation and evolves the next one.
      */
     forceNextGeneration() {
-        this.boids = this.trainer.evolveNextGeneration(this.boids, this.city);
-        this.city.decayHeatmaps();
-        this.selectedBoid = null;
-        StorageManager.saveProgress(this.trainer, this.city);
+        this._finishGeneration();
         this._updateHeaderStats();
         this.renderer.render(this.city, this.boids, this.getInspectedBoid());
         this.chartScreen.render(this.trainer, this.boids);
@@ -235,6 +238,15 @@ class Simulation {
                 if (!this.turboMode) {
                     this.renderer.render(this.city, this.boids, this.getInspectedBoid());
                 }
+            });
+        }
+
+        // Rotate City checkbox (new random city every CITY_ROTATION_INTERVAL generations)
+        const chkRotateCity = document.getElementById('chk-rotate-city');
+        if (chkRotateCity) {
+            chkRotateCity.addEventListener('change', () => {
+                this.trainer.rotateCities = chkRotateCity.checked;
+                StorageManager.saveProgress(this.trainer, this.city);
             });
         }
 
@@ -416,13 +428,33 @@ class Simulation {
 
         this.trainer.generationTimer += dt;
         if (this.trainer.generationTimer >= this.trainer.generationDuration) {
-            this.boids = this.trainer.evolveNextGeneration(this.boids, this.city);
-            this.city.decayHeatmaps();
-            this.selectedBoid = null;
-            StorageManager.saveProgress(this.trainer, this.city);
+            this._finishGeneration();
             return true;
         }
         return false;
+    }
+
+    /**
+     * Evolves the next generation. With city rotation on, every CITY_ROTATION_INTERVAL generations
+     * the next generation drives on a new city (seed drawn from the seeded generator, so a run stays
+     * reproducible), which keeps networks from memorizing a single map.
+     */
+    _finishGeneration() {
+        let nextCity = this.city;
+        if (this.trainer.shouldRotateCity()) {
+            const nextSeed = String(Math.floor(100000 + Random.next() * 900000));
+            nextCity = CityGenerator.generate(this.simCanvas.width, this.simCanvas.height, nextSeed);
+        }
+
+        this.boids = this.trainer.evolveNextGeneration(this.boids, nextCity);
+        if (nextCity !== this.city) {
+            this.city = nextCity;
+            this._syncControlsFromState();
+        } else {
+            this.city.decayHeatmaps();
+        }
+        this.selectedBoid = null;
+        StorageManager.saveProgress(this.trainer, this.city);
     }
 
     _updateHeaderStats() {

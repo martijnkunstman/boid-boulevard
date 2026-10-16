@@ -6,6 +6,18 @@ class Trainer {
     // Maximum number of generation history points kept (in memory and in localStorage)
     static HISTORY_MAX_POINTS = 500;
 
+    // A network only becomes champion after this many evaluations (averaged), so one lucky run never counts
+    static CHAMPION_MIN_EVALS = 3;
+
+    // With city rotation on, training switches to a new random city after every this many generations
+    static CITY_ROTATION_INTERVAL = 10;
+
+    // Benchmark ("driving test") run after every generation: the top networks drive on a fixed city
+    // with fixed spawns and vehicle properties, so its score shows real progress instead of luck
+    static BENCHMARK_SEED = 'benchmark-1';
+    static BENCHMARK_SIZE = 10;
+    static BENCHMARK_STEPS = 900; // 15 s at 60 Hz
+
     /**
      * @param {object} config
      */
@@ -15,6 +27,7 @@ class Trainer {
         this.generationDuration = config.generationDuration || 30.0;
         this.mutationRate = config.mutationRate || 0.14;
         this.mutationStrength = config.mutationStrength || 0.24;
+        this.rotateCities = config.rotateCities ?? true;
 
         this.generation = 1;
         this.generationTimer = 0;
@@ -35,9 +48,10 @@ class Trainer {
         const boids = [];
         const hasElites = this.eliteBrains && this.eliteBrains.length > 0;
         const activeTypes = Boid.ARCHETYPES.slice(0, Math.max(1, Math.min(4, this.boidTypesCount)));
+        const poses = this._shuffledSpawnPoses(city);
 
         for (let i = 0; i < this.populationSize; i++) {
-            const pose = city.getRandomSpawnPose(boids);
+            const pose = poses[i];
             let brain = null;
 
             if (hasElites) {
@@ -66,42 +80,52 @@ class Trainer {
 
     /**
      * Evaluates the current population, records generation statistics, and breeds the next generation.
+     * Ranking uses each network's average score over its last evaluations (see NeuralNetwork.recordScore),
+     * so unchanged elites that keep performing stay on top while one-off lucky runs fall back.
      * @param {Boid[]} currentBoids
-     * @param {City} city
+     * @param {City} city - City the next generation drives on (a new one when the city rotates)
      * @returns {Boid[]} New generation of boids
      */
     evolveNextGeneration(currentBoids, city) {
-        const sorted = [...currentBoids].sort((a, b) => b.fitness - a.fitness);
+        for (const b of currentBoids) {
+            b.brain.recordScore(b.fitness);
+            b.rankScore = b.brain.meanScore();
+        }
+        const sorted = [...currentBoids].sort((a, b) => b.rankScore - a.rankScore);
         const count = Math.max(1, sorted.length);
 
-        const bestBoid = sorted[0];
-        const bestFitness = bestBoid ? bestBoid.fitness : 0;
-        const bestDistance = bestBoid ? bestBoid.distanceTraveled : 0;
-
+        // Statistics of this generation's own run (raw, unaveraged)
+        let bestBoid = null;
         let totalFitness = 0;
         let totalDistance = 0;
         let totalCollisions = 0;
-
-        for (const b of sorted) {
+        for (const b of currentBoids) {
+            if (!bestBoid || b.fitness > bestBoid.fitness) bestBoid = b;
             totalFitness += b.fitness;
             totalDistance += b.distanceTraveled;
             totalCollisions += (b.roadCollisions + b.boidCollisions);
         }
-
+        const bestFitness = bestBoid ? bestBoid.fitness : 0;
+        const bestDistance = bestBoid ? bestBoid.distanceTraveled : 0;
         const avgFitness = totalFitness / count;
         const avgDistance = totalDistance / count;
         const avgCollisions = totalCollisions / count;
         const avgSpeed = avgDistance / Math.max(1, this.generationDuration);
 
-        if (bestBoid && bestFitness > this.allTimeBestFitness) {
-            this.allTimeBestFitness = bestFitness;
-            this.allTimeBestBrain = bestBoid.brain.clone();
-            this.allTimeBestArchetype = bestBoid.archetype;
-        } else if (!this.allTimeBestBrain && bestBoid) {
-            this.allTimeBestFitness = bestFitness;
-            this.allTimeBestBrain = bestBoid.brain.clone();
-            this.allTimeBestArchetype = bestBoid.archetype;
+        // Champion: best average among networks evaluated at least CHAMPION_MIN_EVALS times. The champion
+        // is re-evaluated every generation (slot 0), so a weaker average lets a better network take over.
+        const champion = sorted.find(b => b.brain.evalScores.length >= Trainer.CHAMPION_MIN_EVALS) || null;
+        if (champion) {
+            this.allTimeBestBrain = champion.brain.clone();
+            this.allTimeBestArchetype = champion.archetype;
+            this.allTimeBestFitness = Math.max(this.allTimeBestFitness, champion.rankScore);
+        } else if (!this.allTimeBestBrain && sorted[0]) {
+            // Early generations: provisional champion until one has enough evaluations
+            this.allTimeBestBrain = sorted[0].brain.clone();
+            this.allTimeBestArchetype = sorted[0].archetype;
         }
+
+        const benchmark = this._runBenchmark(sorted.slice(0, Trainer.BENCHMARK_SIZE), city.width, city.height);
 
         // Record history entry for Progress Charts
         this.history.push({
@@ -111,11 +135,13 @@ class Trainer {
             bestDistance: Number(bestDistance.toFixed(1)),
             avgDistance: Number(avgDistance.toFixed(1)),
             avgCollisions: Number(avgCollisions.toFixed(2)),
-            avgSpeed: Number(avgSpeed.toFixed(1))
+            avgSpeed: Number(avgSpeed.toFixed(1)),
+            benchmarkFitness: Number(benchmark.fitness.toFixed(2)),
+            benchmarkDistance: Number(benchmark.distance.toFixed(1))
         });
         this._compactHistory();
 
-        // Keep top elites
+        // Keep top elites (by average score); slot 0 is the champion
         const eliteCount = Math.max(4, Math.floor(this.populationSize * 0.12));
         this.eliteBrains = sorted.slice(0, eliteCount).map(b => b.brain.clone());
         if (this.allTimeBestBrain) {
@@ -123,20 +149,21 @@ class Trainer {
         }
 
         const activeTypes = Boid.ARCHETYPES.slice(0, Math.max(1, Math.min(4, this.boidTypesCount)));
+        const poses = this._shuffledSpawnPoses(city);
 
         // Breed next generation
         const nextBoids = [];
         for (let i = 0; i < this.populationSize; i++) {
-            const pose = city.getRandomSpawnPose(nextBoids);
+            const pose = poses[i];
             let childBrain = null;
             let childArchetype = activeTypes[i % activeTypes.length].name;
 
             if (i === 0 && this.allTimeBestBrain) {
-                // Slot 0: All-time champion brain untouched
+                // Slot 0: champion, unchanged so it is evaluated again
                 childBrain = this.allTimeBestBrain.clone();
                 childArchetype = this.allTimeBestArchetype;
             } else if (i < eliteCount && this.eliteBrains[i]) {
-                // Elites preserved untouched with their matching archetype
+                // Elites preserved unchanged (and re-evaluated) with their matching archetype
                 childBrain = this.eliteBrains[i].clone();
                 childArchetype = sorted[i] ? sorted[i].archetype : childArchetype;
             } else if (i < this.populationSize - 6) {
@@ -174,6 +201,59 @@ class Trainer {
     }
 
     /**
+     * True when the generation that just finished should be followed by a new city.
+     */
+    shouldRotateCity() {
+        return this.rotateCities && this.generation % Trainer.CITY_ROTATION_INTERVAL === 0;
+    }
+
+    /**
+     * Evenly spread spawn poses for the whole population, randomly assigned to population slots.
+     */
+    _shuffledSpawnPoses(city) {
+        const poses = city.getSpawnPoses(this.populationSize);
+        for (let i = poses.length - 1; i > 0; i--) {
+            const j = Math.floor(Random.next() * (i + 1));
+            [poses[i], poses[j]] = [poses[j], poses[i]];
+        }
+        return poses;
+    }
+
+    /**
+     * Drives copies of the given boids' networks on the fixed benchmark city for BENCHMARK_STEPS steps.
+     * Uses its own random seed (restored afterwards), so every generation gets identical conditions
+     * and the main training run is not affected. Returns the mean fitness and distance.
+     */
+    _runBenchmark(topBoids, width, height) {
+        if (topBoids.length === 0) return { fitness: 0, distance: 0 };
+        const savedRandom = Random.saveState();
+
+        if (!this._benchmarkCity || this._benchmarkCity.width !== width || this._benchmarkCity.height !== height) {
+            this._benchmarkCity = CityGenerator.generate(width, height, Trainer.BENCHMARK_SEED);
+        }
+        const city = this._benchmarkCity;
+        Random.setSeed(`${Trainer.BENCHMARK_SEED}-run`);
+
+        const poses = city.getSpawnPoses(topBoids.length);
+        const boids = topBoids.map((b, i) => new Boid(i + 1, poses[i], b.brain, {
+            allowedTypesCount: 4,
+            archetype: b.archetype
+        }));
+        for (let s = 0; s < Trainer.BENCHMARK_STEPS; s++) {
+            Boid.stepAll(boids, city, 1 / 60);
+        }
+
+        Random.restoreState(savedRandom);
+        let fitness = 0;
+        let distance = 0;
+        for (const b of boids) {
+            fitness += b.fitness;
+            distance += b.distanceTraveled;
+        }
+        return { fitness: fitness / boids.length, distance: distance / boids.length };
+    }
+
+    /**
      * Keeps the history within HISTORY_MAX_POINTS without dropping the start of the run:
      * once the limit is exceeded, every odd-indexed point is removed, halving the history
      * (500 -> ~250) while keeping the first generation and the most recent one.
@@ -190,7 +270,7 @@ class Trainer {
         for (let i = 0; i < k; i++) {
             const idx = Math.floor(Random.next() * poolSize);
             const candidate = sortedBoids[idx];
-            if (!best || candidate.fitness > best.fitness) {
+            if (!best || candidate.rankScore > best.rankScore) {
                 best = candidate;
             }
         }
@@ -221,6 +301,7 @@ class Trainer {
             generationDuration: this.generationDuration,
             mutationRate: this.mutationRate,
             mutationStrength: this.mutationStrength,
+            rotateCities: this.rotateCities,
             allTimeBestFitness: this.allTimeBestFitness,
             allTimeBestArchetype: this.allTimeBestArchetype,
             allTimeBestBrain: this.allTimeBestBrain ? this.allTimeBestBrain.serialize() : null,
@@ -237,6 +318,7 @@ class Trainer {
         this.generationDuration = data.generationDuration || this.generationDuration;
         this.mutationRate = data.mutationRate ?? this.mutationRate;
         this.mutationStrength = data.mutationStrength ?? this.mutationStrength;
+        this.rotateCities = data.rotateCities ?? this.rotateCities;
         this.allTimeBestFitness = data.allTimeBestFitness ?? -Infinity;
         this.allTimeBestArchetype = data.allTimeBestArchetype || 'Sedan';
         this.history = Array.isArray(data.history) ? data.history : [];

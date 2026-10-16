@@ -9,6 +9,9 @@
 class NeuralNetwork {
     static DEFAULT_LAYOUT = [17, 12, 8, 2];
 
+    // Number of most recent generation scores remembered per network (see recordScore)
+    static EVAL_WINDOW = 5;
+
     /**
      * @param {number[]} layerSizes - Array of neuron counts per layer, default NeuralNetwork.DEFAULT_LAYOUT
      */
@@ -17,6 +20,10 @@ class NeuralNetwork {
         this.weights = [];
         this.biases = [];
         this.lastActivations = this.layerSizes.map(size => new Array(size).fill(0));
+
+        // Fitness of this exact network in its most recent generations (newest last). Unchanged copies
+        // (elites, champion) keep it; crossover and mutation produce a new network and clear it.
+        this.evalScores = [];
 
         this._initializeRandom();
     }
@@ -178,6 +185,7 @@ class NeuralNetwork {
         const copy = new NeuralNetwork(this.layerSizes);
         copy.weights = this.weights.map(layer => layer.map(row => [...row]));
         copy.biases = this.biases.map(layer => [...layer]);
+        copy.evalScores = [...this.evalScores];
         return copy;
     }
 
@@ -192,6 +200,7 @@ class NeuralNetwork {
             return this.clone();
         }
         const child = this.clone();
+        child.evalScores = [];
         for (let l = 0; l < child.weights.length; l++) {
             for (let j = 0; j < child.weights[l].length; j++) {
                 const takePartnerNeuron = Random.next() < 0.5;
@@ -220,6 +229,7 @@ class NeuralNetwork {
      * @param {number} amount - Mutation step magnitude
      */
     mutate(rate = 0.12, amount = 0.25) {
+        this.evalScores = [];
         for (let l = 0; l < this.weights.length; l++) {
             for (let j = 0; j < this.weights[l].length; j++) {
                 if (Random.next() < rate) {
@@ -244,9 +254,30 @@ class NeuralNetwork {
         return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
     }
 
+    /**
+     * Records one generation's fitness for this network, keeping the last EVAL_WINDOW scores.
+     */
+    recordScore(score) {
+        this.evalScores.push(score);
+        if (this.evalScores.length > NeuralNetwork.EVAL_WINDOW) {
+            this.evalScores.shift();
+        }
+    }
+
+    /**
+     * Average of the remembered scores: a fairer ranking than a single, possibly lucky, generation.
+     */
+    meanScore() {
+        if (this.evalScores.length === 0) return 0;
+        let sum = 0;
+        for (const v of this.evalScores) sum += v;
+        return sum / this.evalScores.length;
+    }
+
     serialize() {
         return {
             layerSizes: this.layerSizes,
+            evalScores: this.evalScores,
             weights: this.weights,
             biases: this.biases
         };
@@ -263,6 +294,9 @@ class NeuralNetwork {
         nn.biases = data.biases.map(layer =>
             layer.map(b => (Number.isFinite(b) ? b : 0))
         );
+        nn.evalScores = Array.isArray(data.evalScores)
+            ? data.evalScores.filter(Number.isFinite).slice(-NeuralNetwork.EVAL_WINDOW)
+            : [];
         return nn;
     }
 }
