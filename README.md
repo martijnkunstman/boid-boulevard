@@ -31,6 +31,7 @@
   - Each boid has an elliptical collision shape (its length front-to-back, its width side-by-side), so boids passing each other in opposite lanes do not collide.
 - **High-Speed & Decoupled "Turbo" Training**
   - Fixed-timestep (`1/60s`) physics loop supports `1x`, `2x`, `4x`, `8x`, `16x`, `32x`, and `64x` speed multipliers without physics tunneling.
+  - Boids **sense and decide at 30 Hz** (every other physics step, staggered so half of the boids think each step) and hold their steering and throttle in between, while movement, collisions and fitness keep running at 60 Hz. This makes a step ~1.4-1.7x faster; in headless tests (60 generations, 3 seeds) training results stayed within noise of deciding every step.
   - Configurable generation duration (`15s`, `30s`, `45s`, `60s`).
   - **Turbo (Skip Render)** mode decouples visualization from physics: each animation frame runs as many physics steps as fit in a `14 ms` time budget (instead of a fixed count) and renders the canvas only once per completed generation, so any physics speedup directly becomes training throughput.
 - **Signed Distance Field Road Queries**
@@ -80,7 +81,7 @@ At the end of a generation, `Trainer` ranks all boids by the **average score of 
 
 **City rotation** (checkbox "Rotate City", on by default): every `10` generations training continues on a new random city, so networks learn to drive rather than memorizing one map. The new city's seed comes from the seeded generator, so a run stays reproducible.
 
-**Benchmark ("driving test")**: after every generation the top `10` networks drive for `15 s` on a fixed benchmark city with fixed spawns and vehicle properties (its own seed, without disturbing the training run). Because the conditions are identical every generation, the orange **Benchmark** line in the fitness and distance charts shows real progress, while the best/average lines include luck and city changes.
+**Benchmark ("driving test")**: after generation 1 and every `5`th generation the top `10` networks drive for `15 s` on a fixed benchmark city with fixed spawns and vehicle properties (its own seed, without disturbing the training run). Because the conditions are identical every generation, the orange **Benchmark** line in the fitness and distance charts shows real progress, while the best/average lines include luck and city changes.
 
 ---
 

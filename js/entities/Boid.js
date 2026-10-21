@@ -4,6 +4,10 @@
  * and non-collapsing collision physics on a two-way, keep-right road network.
  */
 class Boid {
+    // Boids sense and decide every this many physics steps (2 = 30 Hz at the 60 Hz physics rate);
+    // steering and throttle are held in between, which roughly halves sensor and network work
+    static DECISION_INTERVAL = 2;
+
     static ARCHETYPES = [
         {
             name: 'Sedan',
@@ -100,6 +104,8 @@ class Boid {
         this.speed = this.maxSpeed * 0.25;
         this.steerInput = 0;
         this.throttleInput = 0;
+        // Steps until the next sense/decide update (see DECISION_INTERVAL); staggered by id
+        this._decisionCounter = id % Boid.DECISION_INTERVAL;
 
         // Navigation & intersection routing memory
         this.plannedNextRoad = null;
@@ -164,26 +170,34 @@ class Boid {
         this.currentRoad = roadState.road;
         this.travelSign = roadState.travelSign;
 
-        // 2. Update front raycast sensors (road borders and boids in front)
-        this.sensor.update(city, allBoids, grid);
+        // 2-4. Sense and decide only every DECISION_INTERVAL steps (staggered by id, so each step only
+        // half of the boids think). In between, the last steering/throttle outputs are held while
+        // physics, routing and fitness keep running every step.
+        const think = this._decisionCounter === 0;
+        this._decisionCounter = (this._decisionCounter + 1) % Boid.DECISION_INTERVAL;
 
-        // 3. Populate 17-element neural network input vector in-place (zero allocation)
-        const normSpeed = Math.max(-1, Math.min(1, this.speed / this.maxSpeed));
-        const effectiveHeadingError = this._computeGuidedHeadingError(roadState);
+        if (think) {
+            // 2. Update front raycast sensors (road borders and boids in front)
+            this.sensor.update(city, allBoids, grid);
 
-        const inputs = this.lastInputs;
-        for (let i = 0; i < 7; i++) {
-            inputs[i] = this.sensor.roadReadings[i];
-            inputs[i + 7] = this.sensor.boidReadings[i];
+            // 3. Populate 17-element neural network input vector in-place (zero allocation)
+            const normSpeed = Math.max(-1, Math.min(1, this.speed / this.maxSpeed));
+            const effectiveHeadingError = this._computeGuidedHeadingError(roadState);
+
+            const inputs = this.lastInputs;
+            for (let i = 0; i < 7; i++) {
+                inputs[i] = this.sensor.roadReadings[i];
+                inputs[i + 7] = this.sensor.boidReadings[i];
+            }
+            inputs[14] = this.sensor.closingSpeedReading;
+            inputs[15] = normSpeed;
+            inputs[16] = effectiveHeadingError;
+
+            // 4. Run Neural Network forward pass -> [steering, throttle]
+            const outputs = this.brain.forward(inputs);
+            this.steerInput = Math.max(-1, Math.min(1, outputs[0]));
+            this.throttleInput = Math.max(-1, Math.min(1, outputs[1]));
         }
-        inputs[14] = this.sensor.closingSpeedReading;
-        inputs[15] = normSpeed;
-        inputs[16] = effectiveHeadingError;
-
-        // 4. Run Neural Network forward pass -> [steering, throttle]
-        const outputs = this.brain.forward(inputs);
-        this.steerInput = Math.max(-1, Math.min(1, outputs[0]));
-        this.throttleInput = Math.max(-1, Math.min(1, outputs[1]));
 
         // 5. Apply bidirectional throttle physics (forward = accelerate, backwards = brake / reverse)
         let longitudinalAccel = 0;

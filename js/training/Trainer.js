@@ -17,6 +17,7 @@ class Trainer {
     static BENCHMARK_SEED = 'benchmark-1';
     static BENCHMARK_SIZE = 10;
     static BENCHMARK_STEPS = 900; // 15 s at 60 Hz
+    static BENCHMARK_INTERVAL = 5; // run after generation 1 and every 5th generation
 
     /**
      * @param {object} config
@@ -125,20 +126,27 @@ class Trainer {
             this.allTimeBestArchetype = sorted[0].archetype;
         }
 
-        const benchmark = this._runBenchmark(sorted.slice(0, Trainer.BENCHMARK_SIZE), city.width, city.height);
+        // Benchmark only every BENCHMARK_INTERVAL generations (the charts connect the measured points)
+        const runBenchmark = this.generation === 1 || this.generation % Trainer.BENCHMARK_INTERVAL === 0;
+        const benchmark = runBenchmark
+            ? this._runBenchmark(sorted.slice(0, Trainer.BENCHMARK_SIZE), city.width, city.height)
+            : null;
 
         // Record history entry for Progress Charts
-        this.history.push({
+        const entry = {
             generation: this.generation,
             bestFitness: Number(bestFitness.toFixed(2)),
             avgFitness: Number(avgFitness.toFixed(2)),
             bestDistance: Number(bestDistance.toFixed(1)),
             avgDistance: Number(avgDistance.toFixed(1)),
             avgCollisions: Number(avgCollisions.toFixed(2)),
-            avgSpeed: Number(avgSpeed.toFixed(1)),
-            benchmarkFitness: Number(benchmark.fitness.toFixed(2)),
-            benchmarkDistance: Number(benchmark.distance.toFixed(1))
-        });
+            avgSpeed: Number(avgSpeed.toFixed(1))
+        };
+        if (benchmark) {
+            entry.benchmarkFitness = Number(benchmark.fitness.toFixed(2));
+            entry.benchmarkDistance = Number(benchmark.distance.toFixed(1));
+        }
+        this.history.push(entry);
         this._compactHistory();
 
         // Keep top elites (by average score); slot 0 is the champion
