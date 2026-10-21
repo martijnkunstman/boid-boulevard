@@ -11,6 +11,8 @@ class SimulationRenderer {
         this.ctx = canvas.getContext('2d');
         this.showSensorsForBest = true;
         this.showAllSensors = false;
+        this.showTrails = true;
+        this._trailPoint = [0, 0];
 
         // Map overlay: 'none' | 'traffic' | 'crashes' | 'sdf'
         this.overlayMode = 'none';
@@ -70,6 +72,11 @@ class SimulationRenderer {
             this._renderHeatmap(ctx, city, city.crashHeat, SimulationRenderer.OVERLAYS.crashes);
         } else if (this.overlayMode === 'sdf') {
             this._renderDistanceField(ctx, city);
+        }
+
+        // 2d. Fading ghost trails behind the boids
+        if (this.showTrails) {
+            this._renderTrails(ctx, boids);
         }
 
         // 3. Render all boids
@@ -320,6 +327,46 @@ class SimulationRenderer {
             ctx.moveTo(road.nodeA.x + road.dir.x * startGap, road.nodeA.y + road.dir.y * startGap);
             ctx.lineTo(road.nodeB.x - road.dir.x * endGap, road.nodeB.y - road.dir.y * endGap);
             ctx.stroke();
+        }
+        ctx.restore();
+    }
+
+    /**
+     * Draws each boid's recent positions as a line in its own color that fades out toward the oldest
+     * point and ends at the boid's current position.
+     */
+    _renderTrails(ctx, boids) {
+        const point = this._trailPoint;
+        ctx.save();
+        ctx.lineCap = 'round';
+        for (const boid of boids) {
+            const count = boid.trailCount;
+            if (count < 2) continue;
+            ctx.strokeStyle = boid.color;
+            ctx.lineWidth = boid.width * 0.6;
+
+            boid.getTrailPoint(0, point);
+            let prevX = point[0];
+            let prevY = point[1];
+            for (let i = 1; i <= count; i++) {
+                let x;
+                let y;
+                if (i < count) {
+                    boid.getTrailPoint(i, point);
+                    x = point[0];
+                    y = point[1];
+                } else {
+                    x = boid.x;
+                    y = boid.y;
+                }
+                ctx.globalAlpha = 0.45 * (i / count);
+                ctx.beginPath();
+                ctx.moveTo(prevX, prevY);
+                ctx.lineTo(x, y);
+                ctx.stroke();
+                prevX = x;
+                prevY = y;
+            }
         }
         ctx.restore();
     }

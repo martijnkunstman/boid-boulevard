@@ -297,6 +297,16 @@ class Simulation {
             chkAllSensors.addEventListener('input', updateSensorToggle);
         }
 
+        // Ghost trails toggle
+        const chkTrails = document.getElementById('chk-trails');
+        if (chkTrails) {
+            this.renderer.showTrails = chkTrails.checked;
+            chkTrails.addEventListener('change', () => {
+                this.renderer.showTrails = chkTrails.checked;
+                this.renderer.render(this.city, this.boids, this.getInspectedBoid());
+            });
+        }
+
         // Map overlay selector (none, traffic heatmap, crash heatmap, distance field)
         const selectOverlay = document.getElementById('select-overlay');
         if (selectOverlay) {

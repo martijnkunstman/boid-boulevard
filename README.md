@@ -48,7 +48,7 @@
   - Chart history keeps the last `500` generations (in memory and in storage); older generations are dropped, so the charts show the most recent 500 generations at full detail.
   - Includes a **Restart & Clear Local Storage** button to wipe saved data and start fresh.
 - **Three Built-In Screens**
-  1. **City Simulation Screen**: Interactive canvas view of the city, boids, and raycast sensors (click any boid to inspect it). An **Overlay** selector draws one of these over the roads:
+  1. **City Simulation Screen**: Interactive canvas view of the city, boids, and raycast sensors (click any boid to inspect it). **Ghost Trails** (checkbox, on by default) draw a fading line in each boid's color along its last ~`1.3 s` of driving (a position every `4` physics steps, the last `20` kept); a boid that is respawned after getting stuck starts a fresh trail. An **Overlay** selector draws one of these over the roads:
      - **Traffic heatmap**: where boids spend their time
      - **Crash heatmap**: where road-border and boid-to-boid collisions happen
      - **Road distance field (SDF)**: the precomputed signed distance field used for road queries

@@ -8,6 +8,11 @@ class Boid {
     // steering and throttle are held in between, which roughly halves sensor and network work
     static DECISION_INTERVAL = 2;
 
+    // Ghost trail: a position is recorded every TRAIL_INTERVAL physics steps, keeping the last
+    // TRAIL_LENGTH positions (20 x 4 steps = ~1.3 s of driving at 60 Hz)
+    static TRAIL_LENGTH = 20;
+    static TRAIL_INTERVAL = 4;
+
     static ARCHETYPES = [
         {
             name: 'Sedan',
@@ -131,6 +136,40 @@ class Boid {
         this.stuckTimer = 0;
         this.collisionCooldown = 0;
         this.lastInputs = new Array(17).fill(0);
+
+        // Ghost trail ring buffer of recent positions (x0, y0, x1, y1, ...), oldest overwritten first
+        this.trail = new Float32Array(Boid.TRAIL_LENGTH * 2);
+        this.trailCount = 0;
+        this.trailHead = 0;
+        this._trailTick = 0;
+    }
+
+    /**
+     * Records the current position in the ghost trail every TRAIL_INTERVAL steps.
+     */
+    _recordTrail() {
+        if (++this._trailTick < Boid.TRAIL_INTERVAL) return;
+        this._trailTick = 0;
+        this.trail[this.trailHead * 2] = this.x;
+        this.trail[this.trailHead * 2 + 1] = this.y;
+        this.trailHead = (this.trailHead + 1) % Boid.TRAIL_LENGTH;
+        if (this.trailCount < Boid.TRAIL_LENGTH) this.trailCount++;
+    }
+
+    /**
+     * Returns the i-th trail point, oldest first (0 .. trailCount - 1), as [x, y] into `out`.
+     */
+    getTrailPoint(i, out) {
+        const index = (this.trailHead - this.trailCount + i + Boid.TRAIL_LENGTH) % Boid.TRAIL_LENGTH;
+        out[0] = this.trail[index * 2];
+        out[1] = this.trail[index * 2 + 1];
+        return out;
+    }
+
+    clearTrail() {
+        this.trailCount = 0;
+        this.trailHead = 0;
+        this._trailTick = 0;
     }
 
     static _randInRange([min, max]) {
@@ -276,6 +315,9 @@ class Boid {
 
         // 10. Traffic density heatmap (seconds spent per cell)
         city.trafficHeat.add(this.x, this.y, dt);
+
+        // 11. Ghost trail of recent positions (for rendering only)
+        this._recordTrail();
     }
 
     _pickOutgoingRoad(node, currentRoad) {
@@ -354,6 +396,7 @@ class Boid {
             this.fitness -= 1.2 * dt;
             if (this.stuckTimer > 3.6) {
                 const newPose = city.getRandomSpawnPose(allBoids);
+                this.clearTrail(); // teleported: do not draw a trail across the map
                 this.x = newPose.x;
                 this.y = newPose.y;
                 this.heading = newPose.heading;
