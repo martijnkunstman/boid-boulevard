@@ -17,7 +17,7 @@ class Simulation {
             fitnessCanvas: document.getElementById('chart-fitness'),
             distanceCanvas: document.getElementById('chart-distance'),
             collisionCanvas: document.getElementById('chart-collisions'),
-            speedCanvas: document.getElementById('chart-speed')
+            efficiencyCanvas: document.getElementById('chart-efficiency')
         });
 
         this.trainer = new Trainer({

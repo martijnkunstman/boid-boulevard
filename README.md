@@ -55,7 +55,7 @@
 
      Heatmaps fade by half at the end of every generation, so they reflect recent driving behavior.
   2. **Debug Screen**: Live neural network topology & synapse activation visualizer, steering/throttle gauges, sensor readouts, and city/storage diagnostics.
-  3. **Training Progress Charts Screen**: Multi-generation line charts for Best/Average/Benchmark Fitness, Best/Average/Benchmark Distance Traveled, Average Collisions, and Average Population Speed.
+  3. **Training Progress Charts Screen**: Multi-generation line charts for Best/Average/Benchmark Fitness, Best/Average/Benchmark Distance Traveled, Average/Benchmark Collisions per boid, and Average/Benchmark **Efficiency** (distance covered as a share of the maximum possible distance, i.e. top speed x driving time).
 
 ---
 
@@ -83,7 +83,9 @@ At the end of a generation, `Trainer` ranks all boids by the **average score of 
 
 **City rotation** (checkbox "Rotate City", on by default): every `10` generations training continues on a new random city, so networks learn to drive rather than memorizing one map. The new city's seed comes from the seeded generator, so a run stays reproducible.
 
-**Benchmark ("driving test")**: after generation 1 and every `5`th generation the top `10` networks drive for `15 s` on a fixed benchmark city with fixed spawns and vehicle properties (its own seed, without disturbing the training run). Because the conditions are identical every generation, the orange **Benchmark** line in the fitness and distance charts shows real progress, while the best/average lines include luck and city changes.
+**Benchmark ("driving test")**: after generation 1 and every `10`th generation the top `10` networks drive in **full traffic**: `55` cars (copies of the top networks, all `Sedan`) for `30 s` on a fixed benchmark track with fixed spawns and vehicle properties (its own seed, without disturbing the training run). It records distance, collisions, efficiency and fitness per car. Because the conditions are identical every time, the orange **Benchmark** lines show real progress, while the best/average lines include luck and city changes. (An earlier, easier benchmark of 10 cars for 15 s already reached ~96% of the maximum distance within 30 generations, so it could no longer show progress.) A benchmark run costs about as much as a short generation, roughly 8% extra training time.
+
+**Why collision penalties are not higher**: in headless tests (150 generations, 3 seeds) multiplying all collision penalties by 2, 4 or 8 hardly reduced collisions (6.3 to 5.6 per boid) but made boids slow and hesitant (efficiency 82% down to 55%, stuck boids 2% up to 19%), so the penalties stay as listed above.
 
 ---
 

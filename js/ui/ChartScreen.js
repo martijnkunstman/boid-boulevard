@@ -2,18 +2,18 @@
  * ChartScreen - Renders training progress charts across generations onto HTML5 canvases:
  *   1. Best & Average Fitness per Generation
  *   2. Best & Average Distance Traveled per Generation
- *   3. Average Collisions (Road + Boid) per Generation
- *   4. Average Population Speed per Generation
+ *   3. Average Collisions (Road + Boid) per Generation, plus the benchmark
+ *   4. Efficiency: share of the maximum possible distance (top speed x driving time), plus the benchmark
  */
 class ChartScreen {
     /**
-     * @param {object} canvases - { fitnessCanvas, distanceCanvas, collisionCanvas, speedCanvas }
+     * @param {object} canvases - { fitnessCanvas, distanceCanvas, collisionCanvas, efficiencyCanvas }
      */
     constructor(canvases) {
         this.fitnessCanvas = canvases.fitnessCanvas;
         this.distanceCanvas = canvases.distanceCanvas;
         this.collisionCanvas = canvases.collisionCanvas;
-        this.speedCanvas = canvases.speedCanvas;
+        this.efficiencyCanvas = canvases.efficiencyCanvas;
     }
 
     /**
@@ -48,20 +48,24 @@ class ChartScreen {
 
         if (this.collisionCanvas) {
             this._drawLineChart(this.collisionCanvas, data, {
-                title: 'Average Collisions per Boid (Lower is Better)',
+                title: 'Collisions per Boid (Lower is Better)',
                 series: [
-                    { key: 'avgCollisions', label: 'Avg Collisions', color: '#dc2626' }
-                ]
+                    { key: 'avgCollisions', label: 'Avg', color: '#dc2626' },
+                    { key: 'benchmarkCollisions', label: 'Benchmark', color: '#f97316' }
+                ],
+                minY: 0
             });
         }
 
-        if (this.speedCanvas) {
-            this._drawLineChart(this.speedCanvas, data, {
-                title: 'Average Population Speed per Generation (px/s)',
+        if (this.efficiencyCanvas) {
+            this._drawLineChart(this.efficiencyCanvas, data, {
+                title: 'Efficiency (% of max possible distance)',
                 series: [
-                    { key: 'avgSpeed', label: 'Avg Speed (px/s)', color: '#d97706' }
+                    { key: 'avgEfficiency', label: 'Avg', color: '#d97706' },
+                    { key: 'benchmarkEfficiency', label: 'Benchmark', color: '#f97316' }
                 ],
-                minY: 0
+                minY: 0,
+                maxY: 100
             });
         }
     }
@@ -86,6 +90,9 @@ class ChartScreen {
             }
 
             const n = liveBoids.length;
+            // Live efficiency over the time driven so far (skipped right after a generation starts)
+            const elapsed = trainer.generationTimer;
+            const liveEfficiency = elapsed >= 1 ? Trainer.efficiencyPercent(liveBoids, elapsed) : undefined;
 
             list.push({
                 generation: trainer.generation,
@@ -95,6 +102,7 @@ class ChartScreen {
                 avgDistance: Number((sumDist / n).toFixed(1)),
                 avgCollisions: Number((sumCol / n).toFixed(2)),
                 avgSpeed: Number((sumSpeed / n).toFixed(1)),
+                avgEfficiency: liveEfficiency === undefined ? undefined : Number(liveEfficiency.toFixed(1)),
                 isLive: true
             });
         }

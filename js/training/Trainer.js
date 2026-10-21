@@ -12,12 +12,14 @@ class Trainer {
     // With city rotation on, training switches to a new random city after every this many generations
     static CITY_ROTATION_INTERVAL = 10;
 
-    // Benchmark ("driving test") run after every generation: the top networks drive on a fixed city
-    // with fixed spawns and vehicle properties, so its score shows real progress instead of luck
+    // Benchmark ("driving test"): the top networks drive in full traffic on a fixed city with fixed
+    // spawns and vehicle properties, so its scores show real progress instead of luck
     static BENCHMARK_SEED = 'benchmark-1';
-    static BENCHMARK_SIZE = 10;
-    static BENCHMARK_STEPS = 900; // 15 s at 60 Hz
-    static BENCHMARK_INTERVAL = 5; // run after generation 1 and every 5th generation
+    static BENCHMARK_SIZE = 10; // number of top networks tested
+    static BENCHMARK_CARS = 55; // cars on the benchmark track (copies of the top networks)
+    static BENCHMARK_ARCHETYPE = 'Sedan'; // same vehicle for every car, independent of the training types
+    static BENCHMARK_STEPS = 1800; // 30 s at 60 Hz
+    static BENCHMARK_INTERVAL = 10; // run after generation 1 and every 10th generation
 
     /**
      * @param {object} config
@@ -113,6 +115,9 @@ class Trainer {
         const avgDistance = totalDistance / count;
         const avgCollisions = totalCollisions / count;
         const avgSpeed = avgDistance / Math.max(1, this.generationDuration);
+        // Time actually driven (shorter when "Next Gen Now" ended the generation early)
+        const drivenSeconds = this.generationTimer > 0 ? this.generationTimer : this.generationDuration;
+        const avgEfficiency = Trainer.efficiencyPercent(currentBoids, drivenSeconds);
 
         // Champion: best average among networks evaluated at least CHAMPION_MIN_EVALS times. The champion
         // is re-evaluated every generation (slot 0), so a weaker average lets a better network take over.
@@ -141,11 +146,14 @@ class Trainer {
             bestDistance: Number(bestDistance.toFixed(1)),
             avgDistance: Number(avgDistance.toFixed(1)),
             avgCollisions: Number(avgCollisions.toFixed(2)),
-            avgSpeed: Number(avgSpeed.toFixed(1))
+            avgSpeed: Number(avgSpeed.toFixed(1)),
+            avgEfficiency: Number(avgEfficiency.toFixed(1))
         };
         if (benchmark) {
             entry.benchmarkFitness = Number(benchmark.fitness.toFixed(2));
             entry.benchmarkDistance = Number(benchmark.distance.toFixed(1));
+            entry.benchmarkCollisions = Number(benchmark.collisions.toFixed(2));
+            entry.benchmarkEfficiency = Number(benchmark.efficiency.toFixed(1));
         }
         this.history.push(entry);
         this._trimHistory();
@@ -229,12 +237,28 @@ class Trainer {
     }
 
     /**
-     * Drives copies of the given boids' networks on the fixed benchmark city for BENCHMARK_STEPS steps.
-     * Uses its own random seed (restored afterwards), so every generation gets identical conditions
-     * and the main training run is not affected. Returns the mean fitness and distance.
+     * Average share of the maximum possible distance (top speed x driving time) the boids covered, in %.
+     * @param {Boid[]} boids
+     * @param {number} seconds - Driving time
+     */
+    static efficiencyPercent(boids, seconds) {
+        if (boids.length === 0 || seconds <= 0) return 0;
+        let sum = 0;
+        for (const b of boids) {
+            sum += b.distanceTraveled / (b.maxSpeed * seconds);
+        }
+        return (100 * sum) / boids.length;
+    }
+
+    /**
+     * Driving test in full traffic: BENCHMARK_CARS cars, each driving a copy of one of the given top
+     * networks (round-robin), all as BENCHMARK_ARCHETYPE, for BENCHMARK_STEPS steps on the fixed
+     * benchmark city. Uses its own random seed (restored afterwards), so every run has identical
+     * conditions and the training run is not affected.
+     * Returns the per-car averages of fitness, distance and collisions, and the efficiency in %.
      */
     _runBenchmark(topBoids, width, height) {
-        if (topBoids.length === 0) return { fitness: 0, distance: 0 };
+        if (topBoids.length === 0) return { fitness: 0, distance: 0, collisions: 0, efficiency: 0 };
         const savedRandom = Random.saveState();
 
         if (!this._benchmarkCity || this._benchmarkCity.width !== width || this._benchmarkCity.height !== height) {
@@ -243,11 +267,14 @@ class Trainer {
         const city = this._benchmarkCity;
         Random.setSeed(`${Trainer.BENCHMARK_SEED}-run`);
 
-        const poses = city.getSpawnPoses(topBoids.length);
-        const boids = topBoids.map((b, i) => new Boid(i + 1, poses[i], b.brain, {
+        const poses = city.getSpawnPoses(Trainer.BENCHMARK_CARS);
+        const boids = poses.map((pose, i) => new Boid(i + 1, pose, topBoids[i % topBoids.length].brain, {
             allowedTypesCount: 4,
-            archetype: b.archetype
+            archetype: Trainer.BENCHMARK_ARCHETYPE
         }));
+        for (let i = 0; i < boids.length; i++) {
+            boids[i].sensor.update(city, boids);
+        }
         for (let s = 0; s < Trainer.BENCHMARK_STEPS; s++) {
             Boid.stepAll(boids, city, 1 / 60);
         }
@@ -255,11 +282,19 @@ class Trainer {
         Random.restoreState(savedRandom);
         let fitness = 0;
         let distance = 0;
+        let collisions = 0;
         for (const b of boids) {
             fitness += b.fitness;
             distance += b.distanceTraveled;
+            collisions += b.roadCollisions + b.boidCollisions;
         }
-        return { fitness: fitness / boids.length, distance: distance / boids.length };
+        const n = boids.length;
+        return {
+            fitness: fitness / n,
+            distance: distance / n,
+            collisions: collisions / n,
+            efficiency: Trainer.efficiencyPercent(boids, Trainer.BENCHMARK_STEPS / 60)
+        };
     }
 
     /**
