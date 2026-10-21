@@ -16,6 +16,9 @@ class Boid {
     // After a stuck boid is respawned, a ghost dot marks where it was for this many simulated seconds
     static RESPAWN_GHOST_DURATION = 2.0;
 
+    // Reference Sedan speed used to normalize multi-archetype distance fitness rewards
+    static REFERENCE_MAX_SPEED = 102;
+
     static ARCHETYPES = [
         {
             name: 'Sedan',
@@ -69,7 +72,7 @@ class Boid {
 
     /**
      * @param {number} id
-     * @param {object} pose - { x, y, heading, road }
+     * @param {object} pose - { x, y, heading, road, travelSign }
      * @param {NeuralNetwork|null} brain
      * @param {object|null} properties - { archetype, allowedTypesCount, ... }
      */
@@ -77,7 +80,11 @@ class Boid {
         this.id = id;
         this.x = pose.x;
         this.y = pose.y;
-        this.heading = pose.heading || 0;
+        this.heading = 0;
+        this.cosH = 1;
+        this.sinH = 0;
+        this._setHeading(pose.heading || 0);
+
         this.currentRoad = pose.road || null;
         this.travelSign = pose.travelSign || 1;
 
@@ -119,6 +126,27 @@ class Boid {
         this.plannedNextRoad = null;
         this.lastIntersectionNode = null;
 
+        // Pre-allocated road-state and SDF normal scratch buffers (zero per-step heap allocations)
+        this._roadState = {
+            onRoad: true,
+            road: null,
+            t: 0,
+            distToCenterline: 0,
+            lateralOffset: 0,
+            laneError: 0,
+            inCrossing: false,
+            travelSign: 1,
+            travelDir: new Vector2D(),
+            desiredAngle: 0,
+            laneTarget: new Vector2D(),
+            angleDiff: 0,
+            headingError: 0,
+            approachingNode: null,
+            distToNode: 0
+        };
+        this._normalScratch = { x: 0, y: 0, dist: 0 };
+        this._lanePointScratch = { x: 0, y: 0 };
+
         // Front sensor array & Neural Network (layout: NeuralNetwork.DEFAULT_LAYOUT, 17 inputs -> 2 outputs)
         this.sensor = new Sensor(this, 7, this.sensorRange);
         if (brain) {
@@ -138,7 +166,7 @@ class Boid {
         this.timeAlive = 0;
         this.stuckTimer = 0;
         this.collisionCooldown = 0;
-        this.lastInputs = new Array(17).fill(0);
+        this.lastInputs = new Float32Array(17);
 
         // Ghost trail ring buffer of recent positions (x0, y0, x1, y1, ...), oldest overwritten first
         this.trail = new Float32Array(Boid.TRAIL_LENGTH * 2);
@@ -152,6 +180,12 @@ class Boid {
         this.trailCount = 0;
         this.trailHead = 0;
         this._trailTick = 0;
+    }
+
+    _setHeading(angle) {
+        this.heading = angle;
+        this.cosH = Math.cos(angle);
+        this.sinH = Math.sin(angle);
     }
 
     /**
@@ -191,6 +225,7 @@ class Boid {
      * @param {number} dt
      * @param {City} city
      * @param {Boid[]} allBoids
+     * @param {SpatialGrid|null} grid
      */
     update(dt, city, allBoids, grid = null) {
         this.timeAlive += dt;
@@ -199,13 +234,16 @@ class Boid {
             this.collisionCooldown = Math.max(0, this.collisionCooldown - dt);
         }
 
-        // 1. Query current road state and smoothly transition onto outgoing road at intersections
+        // 1. Query current road state in-place (zero allocation) and transition at intersections
         let roadState = city.queryBoidRoadState(
             this.x,
             this.y,
             this.heading,
             this.currentRoad,
-            this.travelSign
+            this.travelSign,
+            this._roadState,
+            this.cosH,
+            this.sinH
         );
 
         if (this._updateIntersectionRouting(roadState)) {
@@ -214,7 +252,10 @@ class Boid {
                 this.y,
                 this.heading,
                 this.currentRoad,
-                this.travelSign
+                this.travelSign,
+                this._roadState,
+                this.cosH,
+                this.sinH
             );
         }
         this.currentRoad = roadState.road;
@@ -227,7 +268,7 @@ class Boid {
         this._decisionCounter = (this._decisionCounter + 1) % Boid.DECISION_INTERVAL;
 
         if (think) {
-            // 2. Update front raycast sensors (road borders and boids in front)
+            // 2. Update front raycast sensors (road borders, boids in front, obstacles)
             this.sensor.update(city, allBoids, grid);
 
             // 3. Populate 17-element neural network input vector in-place (zero allocation)
@@ -235,9 +276,11 @@ class Boid {
             const effectiveHeadingError = this._computeGuidedHeadingError(roadState);
 
             const inputs = this.lastInputs;
+            const rReadings = this.sensor.roadReadings;
+            const bReadings = this.sensor.boidReadings;
             for (let i = 0; i < 7; i++) {
-                inputs[i] = this.sensor.roadReadings[i];
-                inputs[i + 7] = this.sensor.boidReadings[i];
+                inputs[i] = rReadings[i];
+                inputs[i + 7] = bReadings[i];
             }
             inputs[14] = this.sensor.closingSpeedReading;
             inputs[15] = normSpeed;
@@ -253,14 +296,12 @@ class Boid {
         let longitudinalAccel = 0;
         if (this.throttleInput >= 0) {
             longitudinalAccel = this.throttleInput * this.acceleration;
+        } else if (this.speed > 0.5) {
+            // Moving forward: negative throttle acts as braking
+            longitudinalAccel = this.throttleInput * this.brakingForce;
         } else {
-            if (this.speed > 0.5) {
-                // Moving forward: negative throttle acts as braking
-                longitudinalAccel = this.throttleInput * this.brakingForce;
-            } else {
-                // Near stop or reversing: gentle reverse throttle
-                longitudinalAccel = this.throttleInput * (this.acceleration * 0.35);
-            }
+            // Near stop or reversing: gentle reverse throttle
+            longitudinalAccel = this.throttleInput * (this.acceleration * 0.35);
         }
 
         const rollingDrag = -this.speed * 0.28;
@@ -277,14 +318,16 @@ class Boid {
         // 6. Apply steering physics
         const speedFactor = Math.min(1, Math.abs(this.speed) / 16 + 0.3);
         const reverseSign = this.speed < -1 ? -1 : 1;
-        this.heading = Vector2D.normalizeAngle(
-            this.heading + this.steerInput * this.turnRate * speedFactor * reverseSign * dt
+        this._setHeading(
+            Vector2D.normalizeAngle(
+                this.heading + this.steerInput * this.turnRate * speedFactor * reverseSign * dt
+            )
         );
 
         // 7. Integrate position
         const stepDist = this.speed * dt;
-        const nextX = this.x + Math.cos(this.heading) * stepDist;
-        const nextY = this.y + Math.sin(this.heading) * stepDist;
+        const nextX = this.x + this.cosH * stepDist;
+        const nextY = this.y + this.sinH * stepDist;
 
         // 8. Check road boundary & slide smoothly along road borders without getting stuck
         const stillOnRoad = city.isPointOnRoad(nextX, nextY);
@@ -296,42 +339,102 @@ class Boid {
                 this.roadCollisions++;
                 this.fitness -= 5.0;
                 this.collisionCooldown = 0.45;
-                city.crashHeat.add(this.x, this.y);
+                if (city.recordVisuals) {
+                    city.crashHeat.add(this.x, this.y);
+                }
             }
             this.speed *= 0.72;
 
             // Rotate heading smoothly toward the forward lookahead point along the active road
             const angleDiff = Vector2D.normalizeAngle(roadState.desiredAngle - this.heading);
-            this.heading = Vector2D.normalizeAngle(this.heading + angleDiff * 0.55);
+            this._setHeading(Vector2D.normalizeAngle(this.heading + angleDiff * 0.55));
 
-            // Slide smoothly toward the forward lane lookahead point so boids never get stuck on corners
+            // Slide smoothly along the inward SDF gradient / lane target without teleporting forward
             const slideDist = Math.max(2.0, Math.abs(stepDist) * 0.7);
-            const pullToCenter = new Vector2D(
-                roadState.laneTarget.x - this.x,
-                roadState.laneTarget.y - this.y
-            ).normalize();
-            const candX = this.x + pullToCenter.x * slideDist;
-            const candY = this.y + pullToCenter.y * slideDist;
+            const dxTarget = roadState.laneTarget.x - this.x;
+            const dyTarget = roadState.laneTarget.y - this.y;
+            const targetLen = Math.hypot(dxTarget, dyTarget);
+            const pullX = targetLen > 1e-6 ? dxTarget / targetLen : this.cosH;
+            const pullY = targetLen > 1e-6 ? dyTarget / targetLen : this.sinH;
+
+            const candX = this.x + pullX * slideDist;
+            const candY = this.y + pullY * slideDist;
             if (city.isPointOnRoad(candX, candY)) {
                 this.x = candX;
                 this.y = candY;
             } else {
-                this.x = roadState.laneTarget.x;
-                this.y = roadState.laneTarget.y;
+                // Project back inside the road along the SDF inward normal instead of warping ahead
+                const norm = city.sampleRoadNormal(this.x, this.y, this._normalScratch);
+                const push = Math.max(2.5, norm.dist + 1.5);
+                const projX = this.x + norm.x * push;
+                const projY = this.y + norm.y * push;
+                if (city.isPointOnRoad(projX, projY)) {
+                    this.x = projX;
+                    this.y = projY;
+                } else {
+                    this.x = roadState.laneTarget.x;
+                    this.y = roadState.laneTarget.y;
+                }
             }
+        }
+
+        // 8b. Resolve collision with any user-placed roadblock obstacles
+        if (city.obstacles && city.obstacles.length > 0) {
+            this._resolveObstacleCollisions(city);
         }
 
         // 9. Fitness & anti-stall evaluation
         this._evaluateFitness(dt, stepDist, roadState, city, allBoids);
 
-        // 10. Traffic density heatmap (seconds spent per cell)
-        city.trafficHeat.add(this.x, this.y, dt);
+        // 10-11. Visual telemetry (traffic heatmap & ghost trail): skipped in headless benchmarks
+        if (city.recordVisuals) {
+            city.trafficHeat.add(this.x, this.y, dt);
+            this._recordTrail();
+        }
+    }
 
-        // 11. Ghost trail of recent positions (for rendering only)
-        this._recordTrail();
+    _resolveObstacleCollisions(city) {
+        const obstacles = city.obstacles;
+        for (let i = 0; i < obstacles.length; i++) {
+            const obs = obstacles[i];
+            const dx = this.x - obs.x;
+            const dy = this.y - obs.y;
+            const minDist = obs.radius + this.collisionWidth;
+            const distSq = dx * dx + dy * dy;
+            if (distSq < minDist * minDist && distSq > 1e-6) {
+                const dist = Math.sqrt(distSq);
+                const nx = dx / dist;
+                const ny = dy / dist;
+                const overlap = minDist - dist + 0.5;
+                const candX = this.x + nx * overlap;
+                const candY = this.y + ny * overlap;
+                if (city.isPointOnRoad(candX, candY)) {
+                    this.x = candX;
+                    this.y = candY;
+                }
+                this.speed *= 0.45;
+                if (this.collisionCooldown <= 0) {
+                    this.roadCollisions++;
+                    this.fitness -= 4.5;
+                    this.collisionCooldown = 0.45;
+                    if (city.recordVisuals) {
+                        city.crashHeat.add(this.x, this.y);
+                    }
+                }
+            }
+        }
     }
 
     _pickOutgoingRoad(node, currentRoad) {
+        const roads = node.roads;
+        if (roads.length <= 2) {
+            // Fast path for degree-2 closed-loop corner nodes (zero array allocation)
+            for (let i = 0; i < roads.length; i++) {
+                if (roads[i] !== currentRoad) return roads[i];
+            }
+            return currentRoad;
+        }
+
         const candidates = node.getConnectedRoadsExcept(currentRoad);
         if (candidates.length === 0) return currentRoad;
 
@@ -374,8 +477,8 @@ class Boid {
             const node = roadState.approachingNode;
             const nextRoad = this.plannedNextRoad;
             const sign = nextRoad.nodeA === node ? 1 : -1;
-            // Aim for the keep-right lane of the outgoing road
-            const targetPoint = nextRoad.getLanePoint(sign === 1 ? 0.28 : 0.72, sign);
+            // Aim for the keep-right lane of the outgoing road (zero allocation)
+            const targetPoint = nextRoad.getLanePointInto(sign === 1 ? 0.28 : 0.72, sign, this._lanePointScratch);
             const desiredAngle = Math.atan2(targetPoint.y - this.y, targetPoint.x - this.x);
             const angleDiff = Vector2D.normalizeAngle(this.heading - desiredAngle);
             return Math.max(-1, Math.min(1, angleDiff / (Math.PI * 0.4)));
@@ -415,7 +518,7 @@ class Boid {
                 this.respawnAge = 0;
                 this.x = newPose.x;
                 this.y = newPose.y;
-                this.heading = newPose.heading;
+                this._setHeading(newPose.heading);
                 this.currentRoad = newPose.road;
                 this.travelSign = newPose.travelSign || 1;
                 this.speed = this.maxSpeed * 0.35;
@@ -432,37 +535,39 @@ class Boid {
     _collisionRadiusToward(nx, ny) {
         const along = this.collisionLength;
         const across = this.collisionWidth;
-        const cos = Math.cos(this.heading) * nx + Math.sin(this.heading) * ny;
+        const cos = this.cosH * nx + this.sinH * ny;
         const sinSq = Math.max(0, 1 - cos * cos);
         return (along * across) / Math.sqrt(across * across * cos * cos + along * along * sinSq);
     }
 
     /**
-     * Advances all boids by one simulation step: buckets them into the city's spatial grid,
-     * updates each boid (sensors query the grid), then resolves boid-to-boid collisions.
+     * Advances all boids by one simulation step: uses the city's spatial grid for sensor queries,
+     * rebuilds the grid once after all boids move, then resolves boid-to-boid collisions.
      * @param {Boid[]} boids
      * @param {City} city
      * @param {number} dt
      */
     static stepAll(boids, city, dt) {
         const grid = city.boidGrid;
-        grid.rebuild(boids);
+        if (grid.boids !== boids) {
+            grid.rebuild(boids);
+        }
         for (let i = 0; i < boids.length; i++) {
             boids[i].update(dt, city, boids, grid);
         }
-        Boid.resolveBoidCollisions(boids, city, grid);
+        grid.rebuild(boids);
+        Boid.resolveBoidCollisions(boids, city, grid, false);
     }
 
     /**
      * Resolves pairwise boid-to-boid physical separation so boids NEVER collapse/stack onto each other
      * and never get pushed outside the road boundaries.
-     * With a grid, only boids in the same or adjacent cells are paired (the grid is rebuilt first,
-     * since boids moved during the step); without one, every pair is checked.
      * @param {Boid[]} boids
      * @param {City|null} city
      * @param {SpatialGrid|null} grid
+     * @param {boolean} rebuildGrid - Whether to rebuild `grid` before pairing (false when already rebuilt by stepAll)
      */
-    static resolveBoidCollisions(boids, city = null, grid = null) {
+    static resolveBoidCollisions(boids, city = null, grid = null, rebuildGrid = true) {
         const n = boids.length;
 
         if (!grid) {
@@ -474,7 +579,9 @@ class Boid {
             return;
         }
 
-        grid.rebuild(boids);
+        if (rebuildGrid) {
+            grid.rebuild(boids);
+        }
         const { cols, rows, cellStart, items, boidCell } = grid;
         for (let i = 0; i < n; i++) {
             const cell = boidCell[i];
@@ -540,9 +647,9 @@ class Boid {
         }
 
         // Determine who rear-ended whom (or a head-on crash) and damp velocity
-        const aForwardDot = Math.cos(a.heading) * nx + Math.sin(a.heading) * ny;
-        const bForwardDot = -(Math.cos(b.heading) * nx + Math.sin(b.heading) * ny);
-        const headingDot = Math.cos(a.heading - b.heading);
+        const aForwardDot = a.cosH * nx + a.sinH * ny;
+        const bForwardDot = -(b.cosH * nx + b.sinH * ny);
+        const headingDot = a.cosH * b.cosH + a.sinH * b.sinH;
 
         if (headingDot < -0.5 && aForwardDot > 0.2 && bForwardDot > 0.2) {
             // Head-on: both drove into each other, both are at fault
@@ -553,7 +660,7 @@ class Boid {
                     boid.headOnCollisions++;
                     boid.fitness -= 9.0;
                     boid.collisionCooldown = 0.45;
-                    if (city) city.crashHeat.add(boid.x, boid.y);
+                    if (city && city.recordVisuals) city.crashHeat.add(boid.x, boid.y);
                 }
             }
         } else if (aForwardDot > bForwardDot) {
@@ -562,7 +669,7 @@ class Boid {
                 a.boidCollisions++;
                 a.fitness -= 4.5;
                 a.collisionCooldown = 0.45;
-                if (city) city.crashHeat.add(a.x, a.y);
+                if (city && city.recordVisuals) city.crashHeat.add(a.x, a.y);
             }
         } else {
             b.speed = Math.min(b.speed * 0.5, a.speed * 0.85);
@@ -570,7 +677,7 @@ class Boid {
                 b.boidCollisions++;
                 b.fitness -= 4.5;
                 b.collisionCooldown = 0.45;
-                if (city) city.crashHeat.add(b.x, b.y);
+                if (city && city.recordVisuals) city.crashHeat.add(b.x, b.y);
             }
         }
     }

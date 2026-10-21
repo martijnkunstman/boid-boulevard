@@ -2,6 +2,7 @@
  * NeuralNetwork - Feedforward Multi-Layer Perceptron for Boid control.
  * Default architecture: [17, 12, 8, 2] (two hidden layers; in headless tests it outperformed [17, 10, 2]
  * after ~300 generations, while starting slower).
+ * Uses contiguous Float32Array buffers for weights, biases, and activations for cache-friendly, zero-GC inference.
  * Outputs:
  *   output[0]: Steering in [-1, 1] (left to right)
  *   output[1]: Throttle in [-1, 1] (positive = forward acceleration, negative = backward braking/reverse)
@@ -20,18 +21,21 @@ class NeuralNetwork {
 
     /**
      * @param {number[]} layerSizes - Array of neuron counts per layer, default NeuralNetwork.DEFAULT_LAYOUT
+     * @param {boolean} skipInit - If true, skips random weight initialization (used by clone/deserialize)
      */
-    constructor(layerSizes = NeuralNetwork.DEFAULT_LAYOUT) {
+    constructor(layerSizes = NeuralNetwork.DEFAULT_LAYOUT, skipInit = false) {
         this.layerSizes = [...layerSizes];
         this.weights = [];
         this.biases = [];
-        this.lastActivations = this.layerSizes.map(size => new Array(size).fill(0));
+        this.lastActivations = this.layerSizes.map(size => new Float32Array(size));
 
         // Fitness of this exact network in its most recent generations (newest last). Unchanged copies
         // (elites, champion) keep it; crossover and mutation produce a new network and clear it.
         this.evalScores = [];
 
-        this._initializeRandom();
+        if (!skipInit) {
+            this._initializeRandom();
+        }
     }
 
     _initializeRandom() {
@@ -43,16 +47,16 @@ class NeuralNetwork {
             const outCount = this.layerSizes[l + 1];
             const scale = Math.sqrt(2 / (inCount + outCount));
 
-            const layerWeights = [];
-            const layerBiases = [];
+            const layerWeights = new Array(outCount);
+            const layerBiases = new Float32Array(outCount);
 
             for (let j = 0; j < outCount; j++) {
-                const row = [];
+                const row = new Float32Array(inCount);
                 for (let i = 0; i < inCount; i++) {
-                    row.push((Random.next() * 2 - 1) * scale);
+                    row[i] = (Random.next() * 2 - 1) * scale;
                 }
-                layerWeights.push(row);
-                layerBiases.push((Random.next() * 2 - 1) * 0.25);
+                layerWeights[j] = row;
+                layerBiases[j] = (Random.next() * 2 - 1) * 0.25;
             }
 
             this.weights.push(layerWeights);
@@ -69,7 +73,7 @@ class NeuralNetwork {
      *   7..13  : 7 boid-ahead rays (left -75 deg to right +75 deg), 1 = close to boid ahead
      *   14     : closing speed with boid ahead (0 = clear, 1 = fast closing)
      *   15     : current normalized speed
-     *   16     : road/turn heading error (-1 = angled left of road, +1 = angled right of road)
+     *   16     : road/turn/lane heading error (-1 = angled left of target lane, +1 = angled right)
      */
     applyInitialReflexBias(strength = 0.45) {
         if (this.layerSizes.length < 2) return;
@@ -133,9 +137,9 @@ class NeuralNetwork {
     }
 
     /**
-     * Compute network forward pass using pre-allocated activation buffers (zero GC).
-     * @param {number[]} inputs
-     * @returns {number[]} [steering, throttle]
+     * Compute network forward pass using pre-allocated Float32Array activation buffers (zero GC).
+     * @param {Float32Array|number[]} inputs
+     * @returns {Float32Array} [steering, throttle]
      */
     forward(inputs) {
         const inLayer = this.lastActivations[0];
@@ -145,7 +149,8 @@ class NeuralNetwork {
         }
 
         let current = inLayer;
-        for (let l = 0; l < this.weights.length; l++) {
+        const numLayers = this.weights.length;
+        for (let l = 0; l < numLayers; l++) {
             const layerWeights = this.weights[l];
             const layerBiases = this.biases[l];
             const next = this.lastActivations[l + 1];
@@ -187,10 +192,13 @@ class NeuralNetwork {
         return true;
     }
 
+    /**
+     * Fast deep clone using skipInit=true and native Float32Array copies (does not touch Random state).
+     */
     clone() {
-        const copy = new NeuralNetwork(this.layerSizes);
-        copy.weights = this.weights.map(layer => layer.map(row => [...row]));
-        copy.biases = this.biases.map(layer => [...layer]);
+        const copy = new NeuralNetwork(this.layerSizes, true);
+        copy.weights = this.weights.map(layer => layer.map(row => new Float32Array(row)));
+        copy.biases = this.biases.map(layer => new Float32Array(layer));
         copy.evalScores = [...this.evalScores];
         return copy;
     }
@@ -208,20 +216,27 @@ class NeuralNetwork {
         const child = this.clone();
         child.evalScores = [];
         for (let l = 0; l < child.weights.length; l++) {
-            for (let j = 0; j < child.weights[l].length; j++) {
+            const cLayerW = child.weights[l];
+            const pLayerW = partner.weights[l];
+            const cLayerB = child.biases[l];
+            const pLayerB = partner.biases[l];
+
+            for (let j = 0; j < cLayerW.length; j++) {
                 const takePartnerNeuron = Random.next() < 0.5;
                 if (takePartnerNeuron) {
-                    child.biases[l][j] = partner.biases[l][j];
+                    cLayerB[j] = pLayerB[j];
                 } else if (Random.next() < 0.3) {
-                    child.biases[l][j] = (this.biases[l][j] + partner.biases[l][j]) * 0.5;
+                    cLayerB[j] = (cLayerB[j] + pLayerB[j]) * 0.5;
                 }
 
-                for (let i = 0; i < child.weights[l][j].length; i++) {
+                const cRow = cLayerW[j];
+                const pRow = pLayerW[j];
+                for (let i = 0; i < cRow.length; i++) {
                     const r = Random.next();
                     if (r < 0.45) {
-                        child.weights[l][j][i] = partner.weights[l][j][i];
+                        cRow[i] = pRow[i];
                     } else if (r < 0.65) {
-                        child.weights[l][j][i] = (this.weights[l][j][i] + partner.weights[l][j][i]) * 0.5;
+                        cRow[i] = (cRow[i] + pRow[i]) * 0.5;
                     }
                 }
             }
@@ -237,15 +252,18 @@ class NeuralNetwork {
     mutate(rate = 0.12, amount = 0.25) {
         this.evalScores = [];
         for (let l = 0; l < this.weights.length; l++) {
-            for (let j = 0; j < this.weights[l].length; j++) {
+            const layerW = this.weights[l];
+            const layerB = this.biases[l];
+            for (let j = 0; j < layerW.length; j++) {
                 if (Random.next() < rate) {
-                    this.biases[l][j] += NeuralNetwork._mutationStep(amount);
-                    this.biases[l][j] = Math.max(-3.5, Math.min(3.5, this.biases[l][j]));
+                    const bVal = layerB[j] + NeuralNetwork._mutationStep(amount);
+                    layerB[j] = bVal < -3.5 ? -3.5 : bVal > 3.5 ? 3.5 : bVal;
                 }
-                for (let i = 0; i < this.weights[l][j].length; i++) {
+                const row = layerW[j];
+                for (let i = 0; i < row.length; i++) {
                     if (Random.next() < rate) {
-                        this.weights[l][j][i] += NeuralNetwork._mutationStep(amount);
-                        this.weights[l][j][i] = Math.max(-3.5, Math.min(3.5, this.weights[l][j][i]));
+                        const wVal = row[i] + NeuralNetwork._mutationStep(amount);
+                        row[i] = wVal < -3.5 ? -3.5 : wVal > 3.5 ? 3.5 : wVal;
                     }
                 }
             }
@@ -262,11 +280,7 @@ class NeuralNetwork {
     }
 
     static gaussianRandom() {
-        let u = 0;
-        let v = 0;
-        while (u === 0) u = Random.next();
-        while (v === 0) v = Random.next();
-        return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+        return Random.gaussian();
     }
 
     /**
@@ -293,8 +307,8 @@ class NeuralNetwork {
         return {
             layerSizes: this.layerSizes,
             evalScores: this.evalScores,
-            weights: this.weights,
-            biases: this.biases
+            weights: this.weights.map(layer => layer.map(row => Array.from(row))),
+            biases: this.biases.map(layer => Array.from(layer))
         };
     }
 
@@ -302,12 +316,12 @@ class NeuralNetwork {
         if (!data || !Array.isArray(data.layerSizes)) {
             return new NeuralNetwork();
         }
-        const nn = new NeuralNetwork(data.layerSizes);
+        const nn = new NeuralNetwork(data.layerSizes, true);
         nn.weights = data.weights.map(layer =>
-            layer.map(row => row.map(w => (Number.isFinite(w) ? w : 0)))
+            layer.map(row => new Float32Array(row.map(w => (Number.isFinite(w) ? w : 0))))
         );
         nn.biases = data.biases.map(layer =>
-            layer.map(b => (Number.isFinite(b) ? b : 0))
+            new Float32Array(layer.map(b => (Number.isFinite(b) ? b : 0)))
         );
         nn.evalScores = Array.isArray(data.evalScores)
             ? data.evalScores.filter(Number.isFinite).slice(-NeuralNetwork.EVAL_WINDOW)

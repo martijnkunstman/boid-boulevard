@@ -22,14 +22,14 @@ class DebugScreen {
      */
     render(boid, city, trainer, allBoids) {
         if (this.nnCtx && boid && boid.brain) {
-            this._renderNeuralNetwork(this.nnCtx, boid.brain);
+            this._renderNeuralNetwork(this.nnCtx, boid.brain, boid.sensor);
         }
         if (this.telemetryContainer) {
             this._renderTelemetryHTML(boid, city, trainer, allBoids);
         }
     }
 
-    _renderNeuralNetwork(ctx, brain) {
+    _renderNeuralNetwork(ctx, brain, sensor = null) {
         const w = this.nnCanvas.width;
         const h = this.nnCanvas.height;
         ctx.fillStyle = '#111827';
@@ -80,9 +80,17 @@ class DebugScreen {
             }
         }
 
+        // Derive ray degree labels dynamically from actual sensor rayAngles
+        const degLabels = [];
+        for (let i = 0; i < 7; i++) {
+            const rad = sensor && sensor.rayAngles ? sensor.rayAngles[i] : ((i / 6 - 0.5) * 150 * Math.PI) / 180;
+            const deg = Math.round((rad * 180) / Math.PI);
+            degLabels.push(deg > 0 ? `+${deg}°` : `${deg}°`);
+        }
+
         const inputLabels = [
-            'Road -75°', 'Road -45°', 'Road -22°', 'Road 0°', 'Road +22°', 'Road +45°', 'Road +75°',
-            'Boid -75°', 'Boid -45°', 'Boid -22°', 'Boid 0°', 'Boid +22°', 'Boid +45°', 'Boid +75°',
+            ...degLabels.map(d => `Road ${d}`),
+            ...degLabels.map(d => `Boid ${d}`),
             'ClosingV', 'Speed', 'HeadingErr'
         ];
         const outputLabels = ['Steer (L/R)', 'Throttle/Brake'];
@@ -132,7 +140,7 @@ class DebugScreen {
         const storageInfo = StorageManager.getStorageInfo();
         const diagCount = city.roads.filter(r => r.isDiagonal).length;
         const crossingCount = city.nodes.filter(n => n.roads.length >= 3).length;
-        const maxRoadsConnected = Math.max(0, ...city.nodes.map(n => n.roads.length));
+        const obstacleCount = city.obstacles ? city.obstacles.length : 0;
 
         const steerPct = Math.round(((boid.steerInput + 1) * 0.5) * 100);
         const throttleVal = boid.throttleInput;
@@ -140,19 +148,25 @@ class DebugScreen {
             ? `Forward Drive (+${(throttleVal * 100).toFixed(0)}%)`
             : `Braking / Reverse (${(throttleVal * 100).toFixed(0)}%)`;
 
-        const roadBars = boid.sensor.roadReadings
+        const roadBars = Array.from(boid.sensor.roadReadings)
             .map((v, idx) => `<span class="sensor-chip" title="Road Ray ${idx + 1}">${(v * 100).toFixed(0)}%</span>`)
             .join(' ');
-        const boidBars = boid.sensor.boidReadings
+        const boidBars = Array.from(boid.sensor.boidReadings)
             .map((v, idx) => `<span class="sensor-chip boid-chip" title="Boid Ray ${idx + 1}">${(v * 100).toFixed(0)}%</span>`)
             .join(' ');
+
+        const trackModeNames = {
+            loop: 'Closed Loop',
+            crosslink: 'Cross-Link Circuit',
+            grid: 'City Grid'
+        };
 
         this.telemetryContainer.innerHTML = `
             <div class="debug-grid">
                 <div class="debug-box">
                     <h4>Inspected Boid #${boid.id} (${boid.archetype})</h4>
                     <table>
-                        <tr><td>Fitness Score:</td><td><strong>${boid.fitness.toFixed(1)}</strong></td></tr>
+                        <tr><td>Fitness Score:</td><td><strong>${boid.fitness.toFixed(1)}</strong> (Avg: ${boid.brain.meanScore().toFixed(1)})</td></tr>
                         <tr><td>Distance Traveled:</td><td>${boid.distanceTraveled.toFixed(0)} px</td></tr>
                         <tr><td>Speed / Max Speed:</td><td>${boid.speed.toFixed(1)} / ${boid.maxSpeed.toFixed(1)} px/s</td></tr>
                         <tr><td>Accel / Brake Force:</td><td>${boid.acceleration.toFixed(0)} / ${boid.brakingForce.toFixed(0)}</td></tr>
@@ -185,7 +199,7 @@ class DebugScreen {
                             </td>
                         </tr>
                         <tr><td>Road-Border Rays (7):</td><td>${roadBars}</td></tr>
-                        <tr><td>Boid-Ahead Rays (7):</td><td>${boidBars}</td></tr>
+                        <tr><td>Boid/Obstacle Rays (7):</td><td>${boidBars}</td></tr>
                         <tr><td>Closing Speed Ahead:</td><td>${(boid.sensor.closingSpeedReading * 100).toFixed(0)}%</td></tr>
                     </table>
                 </div>
@@ -193,13 +207,12 @@ class DebugScreen {
                 <div class="debug-box">
                     <h4>City Map &amp; Persistence</h4>
                     <table>
-                        <tr><td>Random Seed:</td><td><strong>${city.seed || Random.currentSeed}</strong></td></tr>
+                        <tr><td>Seed / Track Mode:</td><td><strong>${city.seed || Random.currentSeed}</strong> (${trackModeNames[city.trackMode] || 'Closed Loop'})</td></tr>
                         <tr><td>Generation:</td><td><strong>${trainer.generation}</strong> (${trainer.generationTimer.toFixed(1)}s / ${trainer.generationDuration}s)</td></tr>
                         <tr><td>All-Time Best Fitness:</td><td>${trainer.allTimeBestFitness > -1e5 ? trainer.allTimeBestFitness.toFixed(1) : '0.0'}</td></tr>
                         <tr><td>Active Boids / Types:</td><td>${allBoids.length} boids (${trainer.boidTypesCount} / 4 types)</td></tr>
-                        <tr><td>Nodes / Crossings:</td><td>${city.nodes.length} nodes / ${crossingCount} crossings</td></tr>
-                        <tr><td>Max Roads at Any Crossing:</td><td><strong>${maxRoadsConnected}</strong> (Limit &le; 4)</td></tr>
-                        <tr><td>Roads (Total / Diagonal):</td><td>${city.roads.length} total / ${diagCount} diagonal</td></tr>
+                        <tr><td>Corners / 3-4 Way Crossings:</td><td>${city.nodes.length} nodes / ${crossingCount} crossings</td></tr>
+                        <tr><td>Roads / Roadblocks:</td><td>${city.roads.length} roads (${diagCount} diag) / ${obstacleCount} obstacles</td></tr>
                         <tr><td>LocalStorage Saved:</td><td>${storageInfo.hasData ? `Yes (${(storageInfo.sizeBytes / 1024).toFixed(1)} KB at ${storageInfo.savedAt})` : 'Empty'}</td></tr>
                     </table>
                 </div>

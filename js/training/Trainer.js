@@ -1,6 +1,7 @@
 /**
  * Trainer - Genetic Algorithm / Neuroevolution manager that trains the Boid population
  * over generations, tracks historical metrics for charts, and preserves elite brains.
+ * Includes multi-archetype niche speciation, adaptive mutation scaling, and isolated city RNG.
  */
 class Trainer {
     // Number of most recent generations kept in the chart history (in memory and in localStorage)
@@ -26,20 +27,39 @@ class Trainer {
      */
     constructor(config = {}) {
         this.populationSize = config.populationSize || 55;
-        // One vehicle type by default: with several types the fastest one takes over selection anyway
+        // One vehicle type by default: with several types niche speciation keeps all types active
         this.boidTypesCount = config.boidTypesCount || 1;
         this.generationDuration = config.generationDuration || 30.0;
         this.mutationRate = config.mutationRate || 0.14;
         this.mutationStrength = config.mutationStrength || 0.24;
         this.rotateCities = config.rotateCities ?? true;
+        this.trackMode = config.trackMode || 'loop';
 
         this.generation = 1;
         this.generationTimer = 0;
+        this.stagnantGenerations = 0;
         this.allTimeBestFitness = -Infinity;
         this.allTimeBestBrain = null;
         this.allTimeBestArchetype = 'Sedan';
         this.eliteBrains = [];
         this.history = [];
+
+        // Isolated PRNG stream for city rotation so UI actions/respawns do not shift future city seeds
+        this.cityRng = new Random(`${Random.currentSeed}-city-stream`);
+    }
+
+    /**
+     * Resets the isolated city rotation RNG stream from a base seed.
+     */
+    syncCityRng(baseSeed) {
+        this.cityRng.setSeed(`${baseSeed}-city-stream`);
+    }
+
+    /**
+     * Draws the next deterministic 6-digit city seed from the isolated city RNG stream.
+     */
+    nextCitySeed() {
+        return String(Math.floor(100000 + this.cityRng.next() * 900000));
     }
 
     /**
@@ -74,9 +94,10 @@ class Trainer {
             boids.push(boid);
         }
 
-        // Prime initial sensor rays so they are immediately ready for rendering
+        // Rebuild spatial grid and prime initial sensor rays so they are immediately ready
+        city.boidGrid.rebuild(boids);
         for (let i = 0; i < boids.length; i++) {
-            boids[i].sensor.update(city, boids);
+            boids[i].sensor.update(city, boids, city.boidGrid);
         }
 
         return boids;
@@ -91,8 +112,16 @@ class Trainer {
      * @returns {Boid[]} New generation of boids
      */
     evolveNextGeneration(currentBoids, city) {
+        const multiType = this.boidTypesCount > 1;
         for (const b of currentBoids) {
-            b.brain.recordScore(b.fitness);
+            // When training multiple vehicle types, normalize distance fitness by speed ratio so slower
+            // archetypes (Heavy, Compact) compete on driving efficiency rather than raw top speed
+            let evalScore = b.fitness;
+            if (multiType && b.maxSpeed > 0) {
+                const speedNormBonus = b.distanceTraveled * 0.25 * (Boid.REFERENCE_MAX_SPEED / b.maxSpeed - 1);
+                evalScore += speedNormBonus;
+            }
+            b.brain.recordScore(evalScore);
             b.rankScore = b.brain.meanScore();
         }
         const sorted = [...currentBoids].sort((a, b) => b.rankScore - a.rankScore);
@@ -122,6 +151,7 @@ class Trainer {
         // Champion: best average among networks evaluated at least CHAMPION_MIN_EVALS times. The champion
         // is re-evaluated every generation (slot 0), so a weaker average lets a better network take over.
         const champion = sorted.find(b => b.brain.evalScores.length >= Trainer.CHAMPION_MIN_EVALS) || null;
+        const prevBest = this.allTimeBestFitness;
         if (champion) {
             this.allTimeBestBrain = champion.brain.clone();
             this.allTimeBestArchetype = champion.archetype;
@@ -130,6 +160,12 @@ class Trainer {
             // Early generations: provisional champion until one has enough evaluations
             this.allTimeBestBrain = sorted[0].brain.clone();
             this.allTimeBestArchetype = sorted[0].archetype;
+        }
+
+        if (this.allTimeBestFitness > prevBest + 0.5) {
+            this.stagnantGenerations = 0;
+        } else {
+            this.stagnantGenerations++;
         }
 
         // Benchmark only every BENCHMARK_INTERVAL generations (the charts connect the measured points)
@@ -158,14 +194,43 @@ class Trainer {
         this.history.push(entry);
         this._trimHistory();
 
-        // Keep top elites (by average score); slot 0 is the champion
+        const activeTypes = Boid.ARCHETYPES.slice(0, Math.max(1, Math.min(4, this.boidTypesCount)));
+
+        // Keep top elites (by average score); when multiple archetypes are active, guarantee at least
+        // the top representative of each active archetype is preserved in the elite pool (niche elitism)
         const eliteCount = Math.max(4, Math.floor(this.populationSize * 0.12));
-        this.eliteBrains = sorted.slice(0, eliteCount).map(b => b.brain.clone());
+        const eliteBoids = [];
+        if (this.allTimeBestBrain) {
+            const champMatch = sorted.find(b => b.archetype === this.allTimeBestArchetype) || sorted[0];
+            if (champMatch) eliteBoids.push(champMatch);
+        }
+        if (multiType) {
+            for (const arch of activeTypes) {
+                const bestOfArch = sorted.find(b => b.archetype === arch.name && !eliteBoids.includes(b));
+                if (bestOfArch && eliteBoids.length < eliteCount) {
+                    eliteBoids.push(bestOfArch);
+                }
+            }
+        }
+        for (const b of sorted) {
+            if (eliteBoids.length >= eliteCount) break;
+            if (!eliteBoids.includes(b)) {
+                eliteBoids.push(b);
+            }
+        }
+
+        this.eliteBrains = eliteBoids.map(b => b.brain.clone());
         if (this.allTimeBestBrain) {
             this.eliteBrains[0] = this.allTimeBestBrain.clone();
         }
 
-        const activeTypes = Boid.ARCHETYPES.slice(0, Math.max(1, Math.min(4, this.boidTypesCount)));
+        // Adaptive mutation multiplier when champion stagnates over many generations
+        const adaptiveScale = this.stagnantGenerations >= 8
+            ? 1.0 + Math.min(0.28, (this.stagnantGenerations - 7) * 0.035)
+            : 1.0;
+        const effMutationRate = Math.min(0.35, this.mutationRate * adaptiveScale);
+        const effMutationStrength = this.mutationStrength * adaptiveScale;
+
         const poses = this._shuffledSpawnPoses(city);
 
         // Breed next generation
@@ -182,19 +247,25 @@ class Trainer {
             } else if (i < eliteCount && this.eliteBrains[i]) {
                 // Elites preserved unchanged (and re-evaluated) with their matching archetype
                 childBrain = this.eliteBrains[i].clone();
-                childArchetype = sorted[i] ? sorted[i].archetype : childArchetype;
+                childArchetype = eliteBoids[i] ? eliteBoids[i].archetype : childArchetype;
             } else if (i < this.populationSize - 6) {
-                // Tournament selection + crossover + mutation
-                const parentA = this._tournamentSelect(sorted, 4);
-                const parentB = this._tournamentSelect(sorted, 4);
+                // Tournament selection + crossover + mutation (niche-specialized per archetype when multiType)
+                const parentA = this._tournamentSelect(sorted, 4, multiType ? childArchetype : null);
+                const parentB = this._tournamentSelect(
+                    sorted,
+                    4,
+                    multiType && Random.next() < 0.85 ? childArchetype : null
+                );
                 childBrain = parentA.brain.crossover(parentB.brain);
-                childBrain.mutate(this.mutationRate, this.mutationStrength);
-                if (Random.next() < 0.85) {
+                childBrain.mutate(effMutationRate, effMutationStrength);
+                if (!multiType && Random.next() < 0.85) {
                     childArchetype = parentA.archetype;
                 }
             } else {
                 // Fine-tuned small mutation of the best brains for local refinement
-                const templateParent = sorted[i % Math.min(3, sorted.length)];
+                const templateParent = multiType
+                    ? (sorted.find(b => b.archetype === childArchetype) || sorted[i % Math.min(3, sorted.length)])
+                    : sorted[i % Math.min(3, sorted.length)];
                 childBrain = (templateParent ? templateParent.brain : this.allTimeBestBrain).clone();
                 childBrain.mutate(this.mutationRate * 0.55, this.mutationStrength * 0.45);
                 if (templateParent) childArchetype = templateParent.archetype;
@@ -207,9 +278,10 @@ class Trainer {
             nextBoids.push(boid);
         }
 
-        // Prime initial sensor rays
+        // Rebuild spatial grid and prime initial sensor rays
+        city.boidGrid.rebuild(nextBoids);
         for (let i = 0; i < nextBoids.length; i++) {
-            nextBoids[i].sensor.update(city, nextBoids);
+            nextBoids[i].sensor.update(city, nextBoids, city.boidGrid);
         }
 
         this.generation++;
@@ -262,7 +334,8 @@ class Trainer {
         const savedRandom = Random.saveState();
 
         if (!this._benchmarkCity || this._benchmarkCity.width !== width || this._benchmarkCity.height !== height) {
-            this._benchmarkCity = CityGenerator.generate(width, height, Trainer.BENCHMARK_SEED);
+            this._benchmarkCity = CityGenerator.generate(width, height, Trainer.BENCHMARK_SEED, 'loop');
+            this._benchmarkCity.recordVisuals = false;
         }
         const city = this._benchmarkCity;
         Random.setSeed(`${Trainer.BENCHMARK_SEED}-run`);
@@ -272,8 +345,9 @@ class Trainer {
             allowedTypesCount: 4,
             archetype: Trainer.BENCHMARK_ARCHETYPE
         }));
+        city.boidGrid.rebuild(boids);
         for (let i = 0; i < boids.length; i++) {
-            boids[i].sensor.update(city, boids);
+            boids[i].sensor.update(city, boids, city.boidGrid);
         }
         for (let s = 0; s < Trainer.BENCHMARK_STEPS; s++) {
             Boid.stepAll(boids, city, 1 / 60);
@@ -307,13 +381,20 @@ class Trainer {
         }
     }
 
-    _tournamentSelect(sortedBoids, k = 4) {
+    _tournamentSelect(sortedBoids, k = 4, preferredArchetype = null) {
         const poolSize = Math.max(2, Math.floor(sortedBoids.length * 0.55));
         let best = null;
         for (let i = 0; i < k; i++) {
             const idx = Math.floor(Random.next() * poolSize);
             const candidate = sortedBoids[idx];
-            if (!best || candidate.rankScore > best.rankScore) {
+            if (!best) {
+                best = candidate;
+            } else if (preferredArchetype && candidate.archetype === preferredArchetype && best.archetype !== preferredArchetype) {
+                best = candidate;
+            } else if (
+                (!preferredArchetype || candidate.archetype === best.archetype) &&
+                candidate.rankScore > best.rankScore
+            ) {
                 best = candidate;
             }
         }
@@ -345,6 +426,7 @@ class Trainer {
             mutationRate: this.mutationRate,
             mutationStrength: this.mutationStrength,
             rotateCities: this.rotateCities,
+            trackMode: this.trackMode,
             allTimeBestFitness: this.allTimeBestFitness,
             allTimeBestArchetype: this.allTimeBestArchetype,
             allTimeBestBrain: this.allTimeBestBrain ? this.allTimeBestBrain.serialize() : null,
@@ -362,6 +444,7 @@ class Trainer {
         this.mutationRate = data.mutationRate ?? this.mutationRate;
         this.mutationStrength = data.mutationStrength ?? this.mutationStrength;
         this.rotateCities = data.rotateCities ?? this.rotateCities;
+        this.trackMode = data.trackMode || this.trackMode;
         this.allTimeBestFitness = data.allTimeBestFitness ?? -Infinity;
         this.allTimeBestArchetype = data.allTimeBestArchetype || 'Sedan';
         this.history = Array.isArray(data.history) ? data.history : [];

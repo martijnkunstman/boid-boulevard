@@ -1,6 +1,7 @@
 /**
  * SimulationRenderer - Renders the flat 2D two-way city road network with lane markings,
- * crossings, boids, and front sensor rays onto an HTML5 Canvas.
+ * crossings, roadblock obstacles, boids, and front sensor rays onto an HTML5 Canvas.
+ * Caches the static road geometry on an offscreen canvas so per-frame road rendering is a single blit.
  */
 class SimulationRenderer {
     /**
@@ -19,6 +20,8 @@ class SimulationRenderer {
         this._heatCanvas = document.createElement('canvas');
         this._sdfCanvas = document.createElement('canvas');
         this._sdfCanvasCity = null;
+        this._roadLayerCanvas = null;
+        this._roadLayerCity = null;
     }
 
     static OVERLAYS = {
@@ -60,10 +63,8 @@ class SimulationRenderer {
         // 1. Transparent background: only the roads are drawn, the page shows through elsewhere
         ctx.clearRect(0, 0, w, h);
 
-        // 2. Render road curbs/borders and unified asphalt road surfaces
-        this._renderRoadBorders(ctx, city);
-        this._renderRoadSurfaces(ctx, city);
-        this._renderLaneMarkings(ctx, city);
+        // 2. Blit cached static road curbs/borders, asphalt surfaces, and lane markings
+        ctx.drawImage(this._getRoadLayer(city), 0, 0);
 
         // 2b. Optional map overlay (heatmaps or distance field) between roads and boids
         if (this.overlayMode === 'traffic') {
@@ -72,6 +73,11 @@ class SimulationRenderer {
             this._renderHeatmap(ctx, city, city.crashHeat, SimulationRenderer.OVERLAYS.crashes);
         } else if (this.overlayMode === 'sdf') {
             this._renderDistanceField(ctx, city);
+        }
+
+        // 2c. Interactive user-placed roadblock obstacles
+        if (city.obstacles && city.obstacles.length > 0) {
+            this._renderObstacles(ctx, city.obstacles);
         }
 
         // 2d. Fading ghost trails behind the boids, and ghost dots where stuck boids were respawned from
@@ -99,6 +105,45 @@ class SimulationRenderer {
         if (overlay) {
             this._renderOverlayLegend(ctx, overlay, h);
         }
+    }
+
+    /**
+     * Builds and caches the static road layer (borders, surfaces, lane markings) once per city.
+     */
+    _getRoadLayer(city) {
+        if (this._roadLayerCity === city && this._roadLayerCanvas) {
+            return this._roadLayerCanvas;
+        }
+        const layer = this._roadLayerCanvas || (this._roadLayerCanvas = document.createElement('canvas'));
+        layer.width = this.canvas.width;
+        layer.height = this.canvas.height;
+        const lCtx = layer.getContext('2d');
+        lCtx.clearRect(0, 0, layer.width, layer.height);
+        this._renderRoadBorders(lCtx, city);
+        this._renderRoadSurfaces(lCtx, city);
+        this._renderLaneMarkings(lCtx, city);
+        this._roadLayerCity = city;
+        return layer;
+    }
+
+    _renderObstacles(ctx, obstacles) {
+        ctx.save();
+        for (const obs of obstacles) {
+            ctx.fillStyle = 'rgba(249, 115, 22, 0.9)';
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(obs.x, obs.y, obs.radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.strokeStyle = '#7c2d12';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.arc(obs.x, obs.y, obs.radius * 0.5, 0, Math.PI * 2);
+            ctx.stroke();
+        }
+        ctx.restore();
     }
 
     /**
@@ -469,7 +514,7 @@ class SimulationRenderer {
             if (ray.boidHit && (!ray.roadHit || ray.boidReading >= ray.roadReading)) {
                 hitX = ray.boidHitX;
                 hitY = ray.boidHitY;
-                color = `rgba(239, 68, 68, ${alpha})`; // Boid in front = red
+                color = `rgba(239, 68, 68, ${alpha})`; // Boid / Obstacle in front = red
             } else if (ray.roadHit) {
                 hitX = ray.roadHitX;
                 hitY = ray.roadHitY;

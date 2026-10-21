@@ -1,5 +1,5 @@
 /**
- * City - Manages the flat 2D road network, intersections,
+ * City - Manages the flat 2D road network, intersections, interactive obstacles,
  * spatial road queries, and sensor raycasts against road borders.
  */
 class City {
@@ -15,6 +15,10 @@ class City {
     // sensor query radius (smaller cells cost more in per-cell overhead than they save)
     static BOID_GRID_CELL_SIZE = 128;
 
+    // Reusable scratch projection structs for zero-allocation road state queries
+    static _projScratch = { x: 0, y: 0, t: 0, distSq: 0, dist: 0, signedSide: 1 };
+    static _bestProjScratch = { x: 0, y: 0, t: 0, distSq: 0, dist: 0, signedSide: 1 };
+
     /**
      * @param {number} width
      * @param {number} height
@@ -22,14 +26,22 @@ class City {
      * @param {RoadNode[]} nodes
      * @param {Road[]} roads
      * @param {string} seed
+     * @param {object} options - { trackMode, recordVisuals, obstacles }
      */
-    constructor(width, height, bounds, nodes, roads, seed = '104729') {
+    constructor(width, height, bounds, nodes, roads, seed = '104729', options = {}) {
         this.width = width;
         this.height = height;
         this.bounds = bounds;
         this.nodes = nodes;
         this.roads = roads;
         this.seed = String(seed);
+        this.trackMode = options.trackMode || 'loop';
+        this.recordVisuals = options.recordVisuals ?? true;
+
+        // Interactive user-placed roadblock obstacles: { x, y, radius }
+        this.obstacles = Array.isArray(options.obstacles)
+            ? options.obstacles.map(o => ({ x: o.x, y: o.y, radius: o.radius || 13 }))
+            : [];
 
         this._buildDistanceField();
 
@@ -39,6 +51,30 @@ class City {
 
         // Per-step bucketing of boids for fast neighbor queries (see Boid.stepAll)
         this.boidGrid = new SpatialGrid(width, height, City.BOID_GRID_CELL_SIZE);
+    }
+
+    /**
+     * Places a circular roadblock obstacle at (x, y) if on road, or removes an existing obstacle
+     * if (x, y) is clicked within an existing obstacle's radius.
+     * @returns {'added'|'removed'|null}
+     */
+    toggleObstacleAt(x, y, radius = 13) {
+        for (let i = 0; i < this.obstacles.length; i++) {
+            const obs = this.obstacles[i];
+            if (Math.hypot(obs.x - x, obs.y - y) <= obs.radius + 8) {
+                this.obstacles.splice(i, 1);
+                return 'removed';
+            }
+        }
+        if (this.isPointOnRoad(x, y)) {
+            this.obstacles.push({ x: Math.round(x), y: Math.round(y), radius });
+            return 'added';
+        }
+        return null;
+    }
+
+    clearObstacles() {
+        this.obstacles.length = 0;
     }
 
     /**
@@ -68,6 +104,7 @@ class City {
             const abx = road.nodeB.x - ax;
             const aby = road.nodeB.y - ay;
             const abLenSq = abx * abx + aby * aby;
+            const invAbLenSq = abLenSq > 1e-8 ? 1 / abLenSq : 0;
             const hw = road.halfWidth;
             const margin = hw + far;
 
@@ -78,15 +115,18 @@ class City {
 
             for (let r = r0; r <= r1; r++) {
                 const py = r * cell;
+                const rowOffset = r * cols;
+                const apy = py - ay;
                 for (let c = c0; c <= c1; c++) {
                     const px = c * cell;
-                    let t = abLenSq > 1e-8 ? ((px - ax) * abx + (py - ay) * aby) / abLenSq : 0;
+                    const apx = px - ax;
+                    let t = (apx * abx + apy * aby) * invAbLenSq;
                     if (t < 0) t = 0;
                     else if (t > 1) t = 1;
-                    const dx = px - ax - abx * t;
-                    const dy = py - ay - aby * t;
+                    const dx = apx - abx * t;
+                    const dy = apy - aby * t;
                     const dist = Math.sqrt(dx * dx + dy * dy) - hw;
-                    const idx = r * cols + c;
+                    const idx = rowOffset + c;
                     if (dist < field[idx]) {
                         field[idx] = dist;
                     }
@@ -120,6 +160,27 @@ class City {
         const top = f[i] + (f[i + 1] - f[i]) * fx;
         const bottom = f[i + cols] + (f[i + cols + 1] - f[i + cols]) * fx;
         return top + (bottom - top) * fy;
+    }
+
+    /**
+     * Computes the inward unit normal (-grad SDF) pointing back toward the road interior at (px, py).
+     * Written into `out` ({ x, y, dist }) with zero allocations.
+     */
+    sampleRoadNormal(px, py, out) {
+        const eps = 2.0;
+        const d = this.sampleRoadDistance(px, py);
+        const gx = this.sampleRoadDistance(px + eps, py) - this.sampleRoadDistance(px - eps, py);
+        const gy = this.sampleRoadDistance(px, py + eps) - this.sampleRoadDistance(px, py - eps);
+        const len = Math.hypot(gx, gy);
+        if (len > 1e-5) {
+            out.x = -gx / len;
+            out.y = -gy / len;
+        } else {
+            out.x = 0;
+            out.y = 0;
+        }
+        out.dist = d;
+        return out;
     }
 
     update(dt) {
@@ -156,7 +217,7 @@ class City {
             if (dist > -hitEpsilon) {
                 return t;
             }
-            t += Math.max(-dist, minStep);
+            t += -dist > minStep ? -dist : minStep;
         }
 
         return maxDist;
@@ -164,40 +225,45 @@ class City {
 
     /**
      * Analyzes a boid's position (x, y) and heading to determine its active road, centerline point,
-     * and approaching crossing node.
+     * and approaching crossing node. Writes into `outState` if provided (zero allocation).
      */
-    queryBoidRoadState(x, y, heading, currentRoad = null, currentTravelSign = null) {
+    queryBoidRoadState(x, y, heading, currentRoad = null, currentTravelSign = null, outState = null, cosH = null, sinH = null) {
+        const hx = cosH !== null ? cosH : Math.cos(heading);
+        const hy = sinH !== null ? sinH : Math.sin(heading);
+        const projScratch = City._projScratch;
+
         // If currentRoad is valid and the boid is within or near its capsule, keep currentRoad locked
         // so intersections never oscillate back to the old incoming road.
         if (currentRoad) {
-            const curProj = Vector2D.closestPointOnSegment(
+            Vector2D.closestPointOnSegmentInto(
                 x, y,
                 currentRoad.nodeA.x, currentRoad.nodeA.y,
-                currentRoad.nodeB.x, currentRoad.nodeB.y
+                currentRoad.nodeB.x, currentRoad.nodeB.y,
+                projScratch
             );
-            if (curProj.dist <= currentRoad.halfWidth + 10) {
+            if (projScratch.dist <= currentRoad.halfWidth + 10) {
                 return this._buildRoadStateForProjection(
-                    x, y, heading, currentRoad, curProj, currentTravelSign
+                    x, y, heading, hx, hy, currentRoad, projScratch, currentTravelSign, outState
                 );
             }
         }
 
         let bestRoad = null;
-        let bestProj = null;
         let bestScore = Infinity;
+        const bestProj = City._bestProjScratch;
 
-        const hx = Math.cos(heading);
-        const hy = Math.sin(heading);
-
-        for (let i = 0; i < this.roads.length; i++) {
-            const road = this.roads[i];
-            const proj = Vector2D.closestPointOnSegment(
+        const roads = this.roads;
+        const nRoads = roads.length;
+        for (let i = 0; i < nRoads; i++) {
+            const road = roads[i];
+            Vector2D.closestPointOnSegmentInto(
                 x, y,
                 road.nodeA.x, road.nodeA.y,
-                road.nodeB.x, road.nodeB.y
+                road.nodeB.x, road.nodeB.y,
+                projScratch
             );
 
-            let score = proj.dist - road.halfWidth;
+            let score = projScratch.dist - road.halfWidth;
             if (road === currentRoad) {
                 score -= 10.0;
             }
@@ -207,25 +273,29 @@ class City {
             if (score < bestScore) {
                 bestScore = score;
                 bestRoad = road;
-                bestProj = proj;
+                bestProj.x = projScratch.x;
+                bestProj.y = projScratch.y;
+                bestProj.t = projScratch.t;
+                bestProj.distSq = projScratch.distSq;
+                bestProj.dist = projScratch.dist;
+                bestProj.signedSide = projScratch.signedSide;
             }
         }
 
         if (!bestRoad) {
-            bestRoad = this.roads[0];
-            bestProj = Vector2D.closestPointOnSegment(
+            bestRoad = roads[0];
+            Vector2D.closestPointOnSegmentInto(
                 x, y,
                 bestRoad.nodeA.x, bestRoad.nodeA.y,
-                bestRoad.nodeB.x, bestRoad.nodeB.y
+                bestRoad.nodeB.x, bestRoad.nodeB.y,
+                bestProj
             );
         }
 
-        return this._buildRoadStateForProjection(x, y, heading, bestRoad, bestProj, null);
+        return this._buildRoadStateForProjection(x, y, heading, hx, hy, bestRoad, bestProj, null, outState);
     }
 
-    _buildRoadStateForProjection(x, y, heading, road, proj, forcedTravelSign = null) {
-        const hx = Math.cos(heading);
-        const hy = Math.sin(heading);
+    _buildRoadStateForProjection(x, y, heading, hx, hy, road, proj, forcedTravelSign = null, outState = null) {
         const dotDir = hx * road.dir.x + hy * road.dir.y;
 
         let travelSign;
@@ -239,21 +309,44 @@ class City {
             travelSign = dotDir >= 0 ? 1 : -1;
         }
 
+        // Reuse or allocate state object and its nested point vectors
+        const state = outState || {
+            onRoad: true,
+            road: null,
+            t: 0,
+            distToCenterline: 0,
+            lateralOffset: 0,
+            laneError: 0,
+            inCrossing: false,
+            travelSign: 1,
+            travelDir: new Vector2D(),
+            desiredAngle: 0,
+            laneTarget: new Vector2D(),
+            angleDiff: 0,
+            headingError: 0,
+            approachingNode: null,
+            distToNode: 0
+        };
+
         // Lookahead point in the keep-right lane, so boids at intersections are pulled forward into
         // their own lane of the road, never backward into the intersection corner cap.
         const lookaheadT = Math.max(0.14, Math.min(0.86, proj.t + travelSign * 0.18));
-        const laneTarget = road.getLanePoint(lookaheadT, travelSign);
-        const travelDir = road.dir.scale(travelSign);
+        const laneTarget = road.getLanePointInto(lookaheadT, travelSign, state.laneTarget);
+        state.travelDir.x = road.dir.x * travelSign;
+        state.travelDir.y = road.dir.y * travelSign;
 
         // Signed lateral position relative to the centerline (+ = right-hand side of travel direction)
-        const right = road.getRightNormal(travelSign);
-        const lateralOffset = (x - proj.x) * right.x + (y - proj.y) * right.y;
+        const rightX = road.rightX * travelSign;
+        const rightY = road.rightY * travelSign;
+        const lateralOffset = (x - proj.x) * rightX + (y - proj.y) * rightY;
         const laneError = lateralOffset - road.laneOffset;
 
         // Blend road axis angle with angle toward the lookahead lane point when off the lane center
-        const roadAxisAngle = Math.atan2(travelDir.y, travelDir.x);
+        const roadAxisAngle = travelSign > 0 ? road.forwardAnglePos : road.forwardAngleNeg;
         const toLookaheadAngle = Math.atan2(laneTarget.y - y, laneTarget.x - x);
-        const centerPullWeight = Math.min(0.55, Math.abs(laneError) / Math.max(1, road.laneOffset));
+        // Stronger pull when drifting into the oncoming lane (lateralOffset < 0)
+        const maxPull = lateralOffset < 0 ? 0.65 : 0.55;
+        const centerPullWeight = Math.min(maxPull, Math.abs(laneError) / Math.max(1, road.laneOffset));
         const axisToLookaheadDiff = Vector2D.normalizeAngle(toLookaheadAngle - roadAxisAngle);
         const desiredAngle = Vector2D.normalizeAngle(roadAxisAngle + axisToLookaheadDiff * centerPullWeight);
 
@@ -268,23 +361,20 @@ class City {
         const distAlong = proj.t * road.length;
         const inCrossing = distAlong < road.nodeA.radius || road.length - distAlong < road.nodeB.radius;
 
-        return {
-            onRoad,
-            road,
-            t: proj.t,
-            distToCenterline: proj.dist,
-            lateralOffset,
-            laneError,
-            inCrossing,
-            travelSign,
-            travelDir,
-            desiredAngle,
-            laneTarget,
-            angleDiff,
-            headingError,
-            approachingNode,
-            distToNode
-        };
+        state.onRoad = onRoad;
+        state.road = road;
+        state.t = proj.t;
+        state.distToCenterline = proj.dist;
+        state.lateralOffset = lateralOffset;
+        state.laneError = laneError;
+        state.inCrossing = inCrossing;
+        state.travelSign = travelSign;
+        state.desiredAngle = desiredAngle;
+        state.angleDiff = angleDiff;
+        state.headingError = headingError;
+        state.approachingNode = approachingNode;
+        state.distToNode = distToNode;
+        return state;
     }
 
     /**
@@ -314,7 +404,7 @@ class City {
             poses.push({
                 x: point.x,
                 y: point.y,
-                heading: Math.atan2(road.dir.y * travelSign, road.dir.x * travelSign),
+                heading: travelSign > 0 ? road.forwardAnglePos : road.forwardAngleNeg,
                 road,
                 travelSign
             });
@@ -324,7 +414,8 @@ class City {
     }
 
     /**
-     * Picks a valid random spawn point in the keep-right lane of a road, well clear of existing boids.
+     * Picks a valid random spawn point in the keep-right lane of a road, well clear of existing boids
+     * and any roadblock obstacles.
      */
     getRandomSpawnPose(existingBoids = []) {
         for (let attempt = 0; attempt < 40; attempt++) {
@@ -332,13 +423,25 @@ class City {
             const travelSign = Random.next() < 0.5 ? 1 : -1;
             const t = 0.25 + Random.next() * 0.5;
             const pos = road.getLanePoint(t, travelSign);
-            const heading = Math.atan2(road.dir.y * travelSign, road.dir.x * travelSign);
+            const heading = travelSign > 0 ? road.forwardAnglePos : road.forwardAngleNeg;
 
             let clear = true;
-            for (const other of existingBoids) {
-                if (Math.hypot(other.x - pos.x, other.y - pos.y) < 28) {
+            for (let i = 0; i < existingBoids.length; i++) {
+                const other = existingBoids[i];
+                const dx = other.x - pos.x;
+                const dy = other.y - pos.y;
+                if (dx * dx + dy * dy < 784) { // 28^2
                     clear = false;
                     break;
+                }
+            }
+            if (clear) {
+                for (let i = 0; i < this.obstacles.length; i++) {
+                    const obs = this.obstacles[i];
+                    if (Math.hypot(obs.x - pos.x, obs.y - pos.y) < obs.radius + 20) {
+                        clear = false;
+                        break;
+                    }
                 }
             }
 
@@ -357,9 +460,11 @@ class City {
     serialize() {
         return {
             seed: this.seed,
+            trackMode: this.trackMode,
             width: this.width,
             height: this.height,
             bounds: this.bounds,
+            obstacles: this.obstacles,
             nodes: this.nodes.map(n => ({
                 id: n.id,
                 x: n.x,
@@ -405,6 +510,9 @@ class City {
             roads.push(road);
         }
 
-        return new City(data.width, data.height, data.bounds, nodes, roads, data.seed || '104729');
+        return new City(data.width, data.height, data.bounds, nodes, roads, data.seed || '104729', {
+            trackMode: data.trackMode || 'loop',
+            obstacles: data.obstacles || []
+        });
     }
 }

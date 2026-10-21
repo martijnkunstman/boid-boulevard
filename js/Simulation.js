@@ -10,6 +10,9 @@ class Simulation {
         this.simCanvas = document.getElementById('sim-canvas');
         this.nnCanvas = document.getElementById('nn-canvas');
         this.telemetryContainer = document.getElementById('debug-telemetry');
+        this.secSim = document.getElementById('section-simulation');
+        this.secDebug = document.getElementById('section-debug');
+        this.secCharts = document.getElementById('section-charts');
 
         this.renderer = new SimulationRenderer(this.simCanvas);
         this.debugScreen = new DebugScreen(this.nnCanvas, this.telemetryContainer);
@@ -25,7 +28,8 @@ class Simulation {
             boidTypesCount: 1,
             generationDuration: 30.0,
             mutationRate: 0.14,
-            mutationStrength: 0.24
+            mutationStrength: 0.24,
+            trackMode: 'loop'
         });
 
         this.city = null;
@@ -56,13 +60,20 @@ class Simulation {
                 this.city = City.deserialize(saved.city);
                 if (this.city && this.city.seed) {
                     Random.setSeed(this.city.seed);
+                    this.trainer.syncCityRng(this.city.seed);
                 }
             }
         }
 
         if (!this.city) {
             const initialSeed = Random.generateSeedString();
-            this.city = CityGenerator.generate(this.simCanvas.width, this.simCanvas.height, initialSeed);
+            this.trainer.syncCityRng(initialSeed);
+            this.city = CityGenerator.generate(
+                this.simCanvas.width,
+                this.simCanvas.height,
+                initialSeed,
+                this.trainer.trackMode
+            );
         }
 
         this._syncControlsFromState();
@@ -74,6 +85,10 @@ class Simulation {
         const seedInput = document.getElementById('input-seed');
         if (seedInput && this.city) {
             seedInput.value = String(this.city.seed ?? Random.currentSeed);
+        }
+        const selectTrackMode = document.getElementById('select-track-mode');
+        if (selectTrackMode) {
+            selectTrackMode.value = this.city?.trackMode || this.trainer.trackMode || 'loop';
         }
         const popInput = document.getElementById('input-pop-size');
         if (popInput) {
@@ -98,7 +113,13 @@ class Simulation {
      */
     applyCustomSeed(seedValue) {
         const cleanSeed = String(seedValue ?? '').trim() || Random.generateSeedString();
-        this.city = CityGenerator.generate(this.simCanvas.width, this.simCanvas.height, cleanSeed);
+        this.trainer.syncCityRng(cleanSeed);
+        this.city = CityGenerator.generate(
+            this.simCanvas.width,
+            this.simCanvas.height,
+            cleanSeed,
+            this.trainer.trackMode
+        );
         this._syncControlsFromState();
         this.boids = this.trainer.createInitialPopulation(this.city);
         this.selectedBoid = null;
@@ -120,6 +141,8 @@ class Simulation {
         const selectDuration = document.getElementById('select-gen-duration');
         const genDuration = selectDuration ? parseInt(selectDuration.value, 10) || 30 : 30;
         const chkRotateCity = document.getElementById('chk-rotate-city');
+        const selectTrackMode = document.getElementById('select-track-mode');
+        const trackMode = selectTrackMode ? selectTrackMode.value : 'loop';
 
         this.trainer = new Trainer({
             populationSize: popSize,
@@ -127,11 +150,13 @@ class Simulation {
             generationDuration: genDuration,
             mutationRate: 0.14,
             mutationStrength: 0.24,
-            rotateCities: chkRotateCity ? chkRotateCity.checked : true
+            rotateCities: chkRotateCity ? chkRotateCity.checked : true,
+            trackMode
         });
 
         const newSeed = Random.generateSeedString();
-        this.city = CityGenerator.generate(this.simCanvas.width, this.simCanvas.height, newSeed);
+        this.trainer.syncCityRng(newSeed);
+        this.city = CityGenerator.generate(this.simCanvas.width, this.simCanvas.height, newSeed, trackMode);
         this._syncControlsFromState();
         this.boids = this.trainer.createInitialPopulation(this.city);
         this.selectedBoid = null;
@@ -147,7 +172,13 @@ class Simulation {
      */
     generateNewRandomCityKeepBrains() {
         const newSeed = Random.generateSeedString();
-        this.city = CityGenerator.generate(this.simCanvas.width, this.simCanvas.height, newSeed);
+        this.trainer.syncCityRng(newSeed);
+        this.city = CityGenerator.generate(
+            this.simCanvas.width,
+            this.simCanvas.height,
+            newSeed,
+            this.trainer.trackMode
+        );
         this._syncControlsFromState();
         this.boids = this.trainer.createInitialPopulation(this.city);
         this.selectedBoid = null;
@@ -188,6 +219,26 @@ class Simulation {
             });
         }
 
+        // Track Mode selector ('loop', 'crosslink', 'grid')
+        const selectTrackMode = document.getElementById('select-track-mode');
+        if (selectTrackMode) {
+            selectTrackMode.addEventListener('change', e => {
+                this.trainer.trackMode = e.target.value || 'loop';
+                const currentSeed = this.city ? this.city.seed : Random.currentSeed;
+                this.city = CityGenerator.generate(
+                    this.simCanvas.width,
+                    this.simCanvas.height,
+                    currentSeed,
+                    this.trainer.trackMode
+                );
+                this.boids = this.trainer.createInitialPopulation(this.city);
+                this.selectedBoid = null;
+                StorageManager.saveProgress(this.trainer, this.city);
+                this.renderer.render(this.city, this.boids, this.getInspectedBoid());
+                this.debugScreen.render(this.getInspectedBoid(), this.city, this.trainer, this.boids);
+            });
+        }
+
         // Restart & Clear Local Storage button
         const btnRestartClear = document.getElementById('btn-restart-clear');
         if (btnRestartClear) {
@@ -201,6 +252,67 @@ class Simulation {
         if (btnNewCity) {
             btnNewCity.addEventListener('click', () => {
                 this.generateNewRandomCityKeepBrains();
+            });
+        }
+
+        // Clear Obstacles button
+        const btnClearObstacles = document.getElementById('btn-clear-obstacles');
+        if (btnClearObstacles) {
+            btnClearObstacles.addEventListener('click', () => {
+                if (this.city) {
+                    this.city.clearObstacles();
+                    StorageManager.saveProgress(this.trainer, this.city);
+                    this.renderer.render(this.city, this.boids, this.getInspectedBoid());
+                    this.debugScreen.render(this.getInspectedBoid(), this.city, this.trainer, this.boids);
+                }
+            });
+        }
+
+        // Export & Import JSON buttons
+        const btnExportJson = document.getElementById('btn-export-json');
+        if (btnExportJson) {
+            btnExportJson.addEventListener('click', () => {
+                StorageManager.exportToFile(this.trainer, this.city);
+            });
+        }
+
+        const btnImportJson = document.getElementById('btn-import-json');
+        const inputImportJson = document.getElementById('input-import-json');
+        if (btnImportJson && inputImportJson) {
+            btnImportJson.addEventListener('click', () => {
+                inputImportJson.value = '';
+                inputImportJson.click();
+            });
+            inputImportJson.addEventListener('change', e => {
+                const file = e.target.files && e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = ev => {
+                    try {
+                        const parsed = JSON.parse(String(ev.target.result));
+                        if (parsed && parsed.trainer) {
+                            this.trainer.restoreFromData(parsed.trainer);
+                            if (parsed.city) {
+                                this.city = City.deserialize(parsed.city);
+                            }
+                            if (this.city && this.city.seed) {
+                                Random.setSeed(this.city.seed);
+                                this.trainer.syncCityRng(this.city.seed);
+                            }
+                            this._syncControlsFromState();
+                            this.boids = this.trainer.createInitialPopulation(this.city);
+                            this.selectedBoid = null;
+                            StorageManager.saveProgress(this.trainer, this.city);
+                            this._updateHeaderStats();
+                            this.renderer.render(this.city, this.boids, this.getInspectedBoid());
+                            this.debugScreen.render(this.getInspectedBoid(), this.city, this.trainer, this.boids);
+                            this.chartScreen.render(this.trainer, this.boids);
+                        }
+                    } catch (err) {
+                        console.warn('Could not import JSON file:', err);
+                    }
+                };
+                reader.readAsText(file);
             });
         }
 
@@ -328,13 +440,23 @@ class Simulation {
             });
         });
 
-        // Click on simulation canvas to select a specific boid to inspect
+        // Click on simulation canvas to select a boid (or Shift+Click to toggle a roadblock obstacle)
         this.simCanvas.addEventListener('click', e => {
             const rect = this.simCanvas.getBoundingClientRect();
             const scaleX = this.simCanvas.width / rect.width;
             const scaleY = this.simCanvas.height / rect.height;
             const mx = (e.clientX - rect.left) * scaleX;
             const my = (e.clientY - rect.top) * scaleY;
+
+            if (e.shiftKey && this.city) {
+                const action = this.city.toggleObstacleAt(mx, my);
+                if (action) {
+                    StorageManager.saveProgress(this.trainer, this.city);
+                    this.renderer.render(this.city, this.boids, this.getInspectedBoid());
+                    this.debugScreen.render(this.getInspectedBoid(), this.city, this.trainer, this.boids);
+                }
+                return;
+            }
 
             let closest = null;
             let closestDist = 22;
@@ -352,31 +474,31 @@ class Simulation {
     }
 
     _setScreenViewMode(mode) {
-        const secSim = document.getElementById('section-simulation');
-        const secDebug = document.getElementById('section-debug');
-        const secCharts = document.getElementById('section-charts');
-
         if (mode === 'sim') {
-            secSim.classList.remove('hidden');
-            secDebug.classList.add('hidden');
-            secCharts.classList.add('hidden');
+            this.secSim.classList.remove('hidden');
+            this.secDebug.classList.add('hidden');
+            this.secCharts.classList.add('hidden');
         } else if (mode === 'debug') {
-            secSim.classList.add('hidden');
-            secDebug.classList.remove('hidden');
-            secCharts.classList.add('hidden');
+            this.secSim.classList.add('hidden');
+            this.secDebug.classList.remove('hidden');
+            this.secCharts.classList.add('hidden');
         } else if (mode === 'charts') {
-            secSim.classList.add('hidden');
-            secDebug.classList.add('hidden');
-            secCharts.classList.remove('hidden');
+            this.secSim.classList.add('hidden');
+            this.secDebug.classList.add('hidden');
+            this.secCharts.classList.remove('hidden');
         } else {
             // 'all' - Show all screens
-            secSim.classList.remove('hidden');
-            secDebug.classList.remove('hidden');
-            secCharts.classList.remove('hidden');
+            this.secSim.classList.remove('hidden');
+            this.secDebug.classList.remove('hidden');
+            this.secCharts.classList.remove('hidden');
         }
 
-        this.debugScreen.render(this.getInspectedBoid(), this.city, this.trainer, this.boids);
-        this.chartScreen.render(this.trainer, this.boids);
+        if (!this.secDebug.classList.contains('hidden')) {
+            this.debugScreen.render(this.getInspectedBoid(), this.city, this.trainer, this.boids);
+        }
+        if (!this.secCharts.classList.contains('hidden')) {
+            this.chartScreen.render(this.trainer, this.boids);
+        }
     }
 
     _loop(timestamp) {
@@ -411,7 +533,10 @@ class Simulation {
         const inspected = this.getInspectedBoid();
 
         // Decoupled rendering: in Turbo mode, skip per-frame canvas rendering unless a generation just completed
-        if (!this.turboMode || genCompletedThisFrame || this.isPaused) {
+        if (
+            (!this.turboMode || genCompletedThisFrame || this.isPaused) &&
+            (!this.secSim || !this.secSim.classList.contains('hidden'))
+        ) {
             this.renderer.render(this.city, this.boids, inspected);
         }
 
@@ -420,8 +545,12 @@ class Simulation {
         if (this.uiRefreshAccumulator >= refreshInterval || genCompletedThisFrame) {
             this.uiRefreshAccumulator = 0;
             this._updateHeaderStats();
-            this.debugScreen.render(inspected, this.city, this.trainer, this.boids);
-            this.chartScreen.render(this.trainer, this.boids);
+            if (!this.secDebug || !this.secDebug.classList.contains('hidden')) {
+                this.debugScreen.render(inspected, this.city, this.trainer, this.boids);
+            }
+            if (!this.secCharts || !this.secCharts.classList.contains('hidden')) {
+                this.chartScreen.render(this.trainer, this.boids);
+            }
         }
 
         requestAnimationFrame(ts => this._loop(ts));
@@ -446,14 +575,19 @@ class Simulation {
 
     /**
      * Evolves the next generation. With city rotation on, every CITY_ROTATION_INTERVAL generations
-     * the next generation drives on a new city (seed drawn from the seeded generator, so a run stays
-     * reproducible), which keeps networks from memorizing a single map.
+     * the next generation drives on a new city (seed drawn from the isolated cityRng stream, so a run
+     * stays reproducible), which keeps networks from memorizing a single map.
      */
     _finishGeneration() {
         let nextCity = this.city;
         if (this.trainer.shouldRotateCity()) {
-            const nextSeed = String(Math.floor(100000 + Random.next() * 900000));
-            nextCity = CityGenerator.generate(this.simCanvas.width, this.simCanvas.height, nextSeed);
+            const nextSeed = this.trainer.nextCitySeed();
+            nextCity = CityGenerator.generate(
+                this.simCanvas.width,
+                this.simCanvas.height,
+                nextSeed,
+                this.trainer.trackMode
+            );
         }
 
         this.boids = this.trainer.evolveNextGeneration(this.boids, nextCity);

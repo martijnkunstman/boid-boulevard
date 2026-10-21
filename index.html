@@ -9,8 +9,8 @@
 <body>
     <header>
         <div class="header-title">
-            <h1>Boid Boulevard - City Traffic &amp; Neuroevolution Simulation <span class="app-version" title="Application version">v1.12.0</span></h1>
-            <p>Closed-loop track with two-way keep-right lanes, left and right turns, and neural network boids.</p>
+            <h1>Boid Boulevard - City Traffic &amp; Neuroevolution Simulation <span class="app-version" title="Application version">v1.13.0</span></h1>
+            <p>Closed-loop &amp; intersecting city tracks with two-way keep-right lanes, roadblocks, and neural network boids.</p>
         </div>
         <div class="stats-bar">
             <span>Gen: <strong id="stat-gen">1</strong></span>
@@ -36,6 +36,14 @@
                 <input type="text" id="input-seed" value="104729" title="Deterministic random seed">
             </label>
             <button id="btn-apply-seed">Apply Seed</button>
+            <label title="Track topology: Closed Loop, Circuit with Cross-Link Intersections, or Multi-Block City Grid">
+                Track:
+                <select id="select-track-mode">
+                    <option value="loop" selected>Closed Loop</option>
+                    <option value="crosslink">Cross-Link Circuit</option>
+                    <option value="grid">City Grid</option>
+                </select>
+            </label>
             <label>
                 Speed:
                 <select id="select-speed">
@@ -97,13 +105,17 @@
             <button id="btn-pause">Pause</button>
             <button id="btn-next-gen">Next Gen Now</button>
             <button id="btn-new-city">New Random City (Keep Brains)</button>
+            <button id="btn-clear-obstacles" title="Remove all Shift+Click roadblock obstacles">Clear Obstacles</button>
+            <button id="btn-export-json" title="Download trained neural networks, history, and city as a JSON file">Export JSON</button>
+            <button id="btn-import-json" title="Load trained neural networks and city from a JSON file">Import JSON</button>
+            <input type="file" id="input-import-json" accept=".json,application/json" class="hidden">
             <button id="btn-restart-clear" class="danger-btn">Restart &amp; Clear Local Storage</button>
         </div>
     </div>
 
     <!-- 1. SIMULATION SCREEN -->
     <section id="section-simulation" class="screen-section">
-        <h2>City Simulation Screen (Click any boid to inspect in Debug Screen)</h2>
+        <h2>City Simulation Screen (Click any boid to inspect &bull; Shift+Click on road to place/remove roadblock obstacle)</h2>
         <div class="canvas-wrapper">
             <canvas id="sim-canvas" width="1020" height="620"></canvas>
             <div class="legend-bar">
@@ -111,7 +123,8 @@
                 <span><i class="legend-dot" style="background:#2563eb;"></i>2: Compact Boid</span>
                 <span><i class="legend-dot" style="background:#dc2626;"></i>3: Sports Boid</span>
                 <span><i class="legend-dot" style="background:#d97706;"></i>4: Heavy Boid</span>
-                <span><strong>Sensors:</strong> Green=Clear, Amber=Road Border, Red=Boid Ahead</span>
+                <span><i class="legend-dot" style="background:#f97316;border-radius:50%;"></i>Roadblock (Shift+Click)</span>
+                <span><strong>Sensors:</strong> Green=Clear, Amber=Road Border, Red=Boid/Obstacle Ahead</span>
             </div>
         </div>
     </section>

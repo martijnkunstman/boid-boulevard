@@ -1,8 +1,9 @@
 /**
  * Sensor - Front-mounted raycast sensor array for a Boid.
  * Detects:
- *   1. Road borders (curbs & intersection edges)
- *   2. Boids in front
+ *   1. Road borders (curbs & intersection edges via SDF sphere tracing)
+ *   2. Boids in front (via oriented elliptical ray intersection matching physical vehicle dimensions)
+ *   3. Interactive roadblock obstacles placed on the road
  */
 class Sensor {
     /**
@@ -17,12 +18,18 @@ class Sensor {
         this.rayLength = rayLength;
         this.spreadAngle = spreadAngle;
 
-        this.rayAngles = [];
+        this.rayAngles = new Float32Array(this.rayCount);
+        this.rayCos = new Float32Array(this.rayCount);
+        this.raySin = new Float32Array(this.rayCount);
+
         // Pre-allocate ray objects for zero-GC updates during high-speed training
         this.rays = [];
         for (let i = 0; i < this.rayCount; i++) {
             const frac = this.rayCount === 1 ? 0.5 : i / (this.rayCount - 1);
-            this.rayAngles.push((frac - 0.5) * this.spreadAngle);
+            const angle = (frac - 0.5) * this.spreadAngle;
+            this.rayAngles[i] = angle;
+            this.rayCos[i] = Math.cos(angle);
+            this.raySin[i] = Math.sin(angle);
             this.rays.push({
                 ox: 0,
                 oy: 0,
@@ -40,37 +47,42 @@ class Sensor {
         }
 
         // Readings in [0, 1] where 0 = clear/far, 1 = immediate proximity
-        this.roadReadings = new Array(this.rayCount).fill(0);
-        this.boidReadings = new Array(this.rayCount).fill(0);
+        this.roadReadings = new Float32Array(this.rayCount);
+        this.boidReadings = new Float32Array(this.rayCount);
         this.closingSpeedReading = 0;
         this._nearby = [];
     }
 
     /**
-     * Updates all sensor rays against the city road boundaries and other boids.
+     * Updates all sensor rays against the city road boundaries, other boids, and roadblock obstacles.
      * @param {City} city
      * @param {Boid[]} boids
-     * @param {SpatialGrid|null} grid - Grid built from `boids` this step; without it all boids are scanned
+     * @param {SpatialGrid|null} grid - Grid built from `boids`; without it all boids are scanned
      */
     update(city, boids, grid = null) {
-        const frontOffset = this.boid.length * 0.48;
-        const ox = this.boid.x + Math.cos(this.boid.heading) * frontOffset;
-        const oy = this.boid.y + Math.sin(this.boid.heading) * frontOffset;
+        const boid = this.boid;
+        const cosH = boid.cosH;
+        const sinH = boid.sinH;
+        const frontOffset = boid.length * 0.48;
+        const ox = boid.x + cosH * frontOffset;
+        const oy = boid.y + sinH * frontOffset;
 
         let maxClosingSpeed = 0;
+        const rayLength = this.rayLength;
+        const invRayLength = 1 / rayLength;
 
         // Pre-filter nearby boids (reused array, no per-step allocation)
-        const maxDistWithRadius = this.rayLength + 20;
+        const maxDistWithRadius = rayLength + 20;
         const nearbyBoids = this._nearby;
 
         if (grid) {
-            grid.queryRadius(ox, oy, maxDistWithRadius, this.boid, nearbyBoids);
+            grid.queryRadius(ox, oy, maxDistWithRadius, boid, nearbyBoids);
         } else {
             const maxDistSq = maxDistWithRadius * maxDistWithRadius;
             nearbyBoids.length = 0;
             for (let i = 0; i < boids.length; i++) {
                 const other = boids[i];
-                if (other === this.boid) continue;
+                if (other === boid) continue;
 
                 const dx = other.x - ox;
                 const dy = other.y - oy;
@@ -80,31 +92,40 @@ class Sensor {
             }
         }
 
+        const obstacles = city.obstacles;
+        const hasObstacles = obstacles && obstacles.length > 0;
+        const nNearby = nearbyBoids.length;
+
         for (let i = 0; i < this.rayCount; i++) {
             const relAngle = this.rayAngles[i];
-            const rayAngle = this.boid.heading + relAngle;
-            const dx = Math.cos(rayAngle);
-            const dy = Math.sin(rayAngle);
+            const rCos = this.rayCos[i];
+            const rSin = this.raySin[i];
+            // Angle addition: cos(heading + relAngle), sin(heading + relAngle)
+            const dx = cosH * rCos - sinH * rSin;
+            const dy = sinH * rCos + cosH * rSin;
 
             // 1. Sense road border
-            const roadDist = city.raycastRoadSide(ox, oy, dx, dy, this.rayLength);
-            const roadHit = roadDist < this.rayLength;
+            const roadDist = city.raycastRoadSide(ox, oy, dx, dy, rayLength);
+            const roadHit = roadDist < rayLength;
             const roadReading = roadHit
-                ? Math.max(0, Math.min(1, 1 - roadDist / this.rayLength))
+                ? Math.max(0, Math.min(1, 1 - roadDist * invRayLength))
                 : 0;
             this.roadReadings[i] = roadReading;
 
-            // 2. Sense boids in front along this ray
-            let closestBoidDist = this.rayLength;
+            // 2. Sense boids in front along this ray using oriented elliptical bounds
+            let closestBoidDist = rayLength;
             let hitBoid = null;
+            let hitObstacle = false;
 
-            for (let j = 0; j < nearbyBoids.length; j++) {
+            for (let j = 0; j < nNearby; j++) {
                 const other = nearbyBoids[j];
-                const hitRadius = Math.max(other.width, other.length * 0.55) + 2;
-                const dist = Vector2D.rayCircleIntersection(
+                const rx = other.collisionLength + 1.2;
+                const ry = other.collisionWidth + 0.9;
+                const dist = Vector2D.rayEllipseIntersection(
                     ox, oy, dx, dy,
                     other.x, other.y,
-                    hitRadius,
+                    other.cosH, other.sinH,
+                    rx, ry,
                     closestBoidDist
                 );
                 // Equal distances go to the lowest id, so results do not depend on candidate order
@@ -115,18 +136,46 @@ class Sensor {
                 }
             }
 
+            // 2b. Sense interactive roadblock obstacles if present
+            if (hasObstacles) {
+                for (let k = 0; k < obstacles.length; k++) {
+                    const obs = obstacles[k];
+                    const dist = Vector2D.rayCircleIntersection(
+                        ox, oy, dx, dy,
+                        obs.x, obs.y,
+                        obs.radius + 2,
+                        closestBoidDist
+                    );
+                    if (dist !== null && dist < closestBoidDist) {
+                        closestBoidDist = dist;
+                        hitBoid = null;
+                        hitObstacle = true;
+                    }
+                }
+            }
+
             let boidReading = 0;
-            if (hitBoid) {
-                boidReading = Math.max(0, Math.min(1, 1 - closestBoidDist / this.rayLength));
-                // Only the center ray measures closing velocity: the +-25 deg rays would also catch
-                // oncoming traffic passing in the other lane and trigger needless braking
+            if (hitBoid || hitObstacle) {
+                boidReading = Math.max(0, Math.min(1, 1 - closestBoidDist * invRayLength));
+                // Only the center ray measures closing velocity: filter out oncoming traffic in the
+                // opposite lane (sameDir < -0.25) so oncoming cars on curves don't trigger phantom braking
                 if (Math.abs(relAngle) < 0.2) {
-                    const otherVelAlongRay =
-                        Math.cos(hitBoid.heading) * hitBoid.speed * dx +
-                        Math.sin(hitBoid.heading) * hitBoid.speed * dy;
-                    const closing = (this.boid.speed - otherVelAlongRay) / Math.max(1, this.boid.maxSpeed);
-                    if (closing > maxClosingSpeed) {
-                        maxClosingSpeed = closing;
+                    if (hitBoid) {
+                        const sameDir = cosH * hitBoid.cosH + sinH * hitBoid.sinH;
+                        if (sameDir > -0.25) {
+                            const otherVelAlongRay =
+                                hitBoid.cosH * hitBoid.speed * dx +
+                                hitBoid.sinH * hitBoid.speed * dy;
+                            const closing = (boid.speed - otherVelAlongRay) / Math.max(1, boid.maxSpeed);
+                            if (closing > maxClosingSpeed) {
+                                maxClosingSpeed = closing;
+                            }
+                        }
+                    } else if (hitObstacle) {
+                        const closing = boid.speed / Math.max(1, boid.maxSpeed);
+                        if (closing > maxClosingSpeed) {
+                            maxClosingSpeed = closing;
+                        }
                     }
                 }
             }
@@ -135,15 +184,15 @@ class Sensor {
             const rayObj = this.rays[i];
             rayObj.ox = ox;
             rayObj.oy = oy;
-            rayObj.endX = ox + dx * this.rayLength;
-            rayObj.endY = oy + dy * this.rayLength;
+            rayObj.endX = ox + dx * rayLength;
+            rayObj.endY = oy + dy * rayLength;
             rayObj.roadHitX = ox + dx * roadDist;
             rayObj.roadHitY = oy + dy * roadDist;
             rayObj.roadHit = roadHit;
             rayObj.roadReading = roadReading;
             rayObj.boidHitX = ox + dx * closestBoidDist;
             rayObj.boidHitY = oy + dy * closestBoidDist;
-            rayObj.boidHit = Boolean(hitBoid);
+            rayObj.boidHit = Boolean(hitBoid || hitObstacle);
             rayObj.boidReading = boidReading;
         }
 
