@@ -1,14 +1,15 @@
 # Boid Boulevard
 
-**Boid Boulevard** is a browser-based 2D city traffic and neuroevolution simulation built with vanilla HTML5 Canvas, CSS, and Object-Oriented JavaScript (zero external dependencies). Autonomous vehicle agents (**boids**) equipped with front-facing raycast sensors and feedforward neural networks learn from scratch how to steer, accelerate, brake, navigate crossings and diagonal avenues, and avoid collisions inside a closed rectangular city.
+**Boid Boulevard** is a browser-based 2D city traffic and neuroevolution simulation built with vanilla HTML5 Canvas, CSS, and Object-Oriented JavaScript (zero external dependencies). Autonomous vehicle agents (**boids**) equipped with front-facing raycast sensors and feedforward neural networks learn from scratch how to steer, accelerate, brake, take left and right turns, and avoid collisions on a closed-loop track with two-way traffic.
 
 ---
 
 ## Key Features
 
-- **Closed Rectangular City Generation**
-  - Procedural city road network strictly enclosed inside a rectangular perimeter so no road ever leads outside the city.
-  - Features a perimeter boulevard, interior avenues, crossings (strictly capped at **$\le 4$ roads per crossing**), and **diagonal shortcut roads**.
+- **Closed-Loop Track Generation**
+  - Each city is a single **closed circuit without any splits**: every corner joins exactly two roads, so there are no crossings or forks.
+  - `10`-`14` corner points are placed around the map center at increasing angles (so the loop never crosses itself); `3`-`4` non-adjacent corners are pulled inward, so the track has at least **`3` turns to each side** (left and right, depending on the driving direction).
+  - Every candidate track is validated (no turn sharper than ~`110°`, segments at least `110 px`, at least `24 px` of space between the road surfaces of non-adjacent segments); invalid candidates are discarded and a new one is drawn from the same seed.
   - **Two-way roads** (`64 px` wide) with a dashed centerline: traffic keeps right, each direction in its own lane. In headless tests with 120 boids, `64 px` roads halved the share of stuck boids compared with `53 px` (fewer traffic jams, ~27% more distance, ~30% fewer collisions); wider roads make driving easier but do not make the networks smarter (networks trained on narrow or wide roads drive equally well on the same test).
 - **Deterministic Random Seed**
   - Uses a seeded Mulberry32 PRNG (`Random`) so entering the same seed reproduces the exact same city layout, spawn poses, and genetic mutations.
@@ -18,7 +19,7 @@
     - `7` Front Boid-Detection Ray Sensors (same 7 angles)
     - `1` Closing Speed sensor toward the boid straight ahead (center ray only, so oncoming traffic in the other lane does not trigger it)
     - `1` Normalized Current Speed (`speed / maxSpeed`)
-    - `1` Signed heading error toward a lookahead point in the boid's own (right-hand) lane, or into the correct lane of the next road when turning at a crossing
+    - `1` Signed heading error toward a lookahead point in the boid's own (right-hand) lane, or into the correct lane of the next road when taking a corner
   - **Two Hidden Layers** of `12` and `8` neurons (`tanh` activation). In headless tests (3 seeds, trained from scratch) this layout overtook the earlier single `10`-neuron layer after ~300 generations (about 3% more distance, 6% higher fitness, 20% fewer collisions), but it learns more slowly during the first ~100 generations.
   - **2 Continuous Outputs** (`tanh` activation in `[-1, +1]`):
     1. **Steering Direction**: `-1` (full left) to `+1` (full right)
@@ -67,7 +68,7 @@ Each generation runs for a fixed duration (default `30s`, or `1,800` physics ste
   - Hitting road borders (`-5.0` per impact, with a `0.45s` cooldown)
   - Rear-ending another boid (`-4.5` per collision for the boid at fault, with a `0.45s` cooldown)
   - Head-on collisions (`-9.0` for both boids)
-  - Driving in the opposite lane (`-1.5 / sec`; lane rules do not apply inside crossings)
+  - Driving in the opposite lane (`-1.5 / sec`; lane rules do not apply inside corners, where the lanes of two roads overlap)
   - Idling or stalling below `6 px/s` (`-1.2 / sec`); a boid stuck for more than `3.6s` is respawned at a new location
   - Driving in reverse (`-0.1` per pixel reversed)
 
@@ -106,7 +107,7 @@ boid-boulevard/
     │   ├── HeatGrid.js         # Coarse grid for traffic & crash heatmaps
     │   ├── SpatialGrid.js      # Per-step boid bucketing for fast neighbor queries
     │   ├── City.js             # City graph, road distance field (SDF) & road queries
-    │   └── CityGenerator.js    # Procedural closed rectangular city generator
+    │   └── CityGenerator.js    # Procedural closed-loop track generator
     ├── entities/
     │   ├── Sensor.js           # 7-ray road border & boid ahead raycaster
     │   └── Boid.js             # Autonomous vehicle physics, archetypes & fitness

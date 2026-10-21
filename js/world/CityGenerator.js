@@ -1,12 +1,24 @@
 /**
- * CityGenerator - Randomly generates a clean, flat 2D city road network within a rectangular boundary:
- *  - Rectangular perimeter limited by diagonal corner roads (no roads leading out of the city)
- *  - Clean, less complicated layout with spacious blocks
- *  - Internal diagonal roads and orthogonal streets
- *  - Strictly enforces <= 4 connected roads at every crossing
+ * CityGenerator - Randomly generates a single closed-loop track (a circuit without any splits):
+ *  - Every node joins exactly two roads, so there are no crossings or forks
+ *  - Corner points sit around the map center at increasing angles, so the loop never crosses itself
+ *  - A few non-adjacent corner points are pulled inward, so the track turns both ways
+ *    (at least MIN_TURNS_EACH_WAY turns to each side)
+ *  - Every candidate is validated (turn sharpness, segment length, spacing between road surfaces);
+ *    invalid candidates are discarded and a new one is drawn from the same seeded generator
  */
 class CityGenerator {
-    static MAX_ROADS_PER_NODE = 4;
+    static MIN_CORNERS = 10;
+    static MAX_CORNERS = 14;
+    static MIN_TURNS_EACH_WAY = 3;
+    // Sharpest allowed direction change at a corner (~110 deg), so boids can take every turn
+    static MAX_TURN_ANGLE = 1.92;
+    // Direction change from which a corner counts as a real turn (~14 deg)
+    static MIN_COUNTED_TURN = 0.25;
+    static MIN_SEGMENT_LENGTH = 110;
+    // Extra clearance between road surfaces of non-adjacent segments (px, on top of the road width)
+    static SURFACE_CLEARANCE = 24;
+    static MAX_ATTEMPTS = 400;
 
     /**
      * @param {number} width - Canvas/world width
@@ -32,206 +44,154 @@ class CityGenerator {
             height: height - marginY * 2
         };
 
-        // Build a clean 4x4 grid of base positions (omitting the 4 extreme corners)
-        const cols = 4;
-        const rows = 4;
-        const colWeights = CityGenerator._randomPartition(cols - 1, 0.27);
-        const rowWeights = CityGenerator._randomPartition(rows - 1, 0.27);
-
-        const colX = [rect.left];
-        for (let c = 0; c < colWeights.length; c++) {
-            colX.push(colX[c] + colWeights[c] * rect.width);
-        }
-        colX[cols - 1] = rect.right;
-
-        const rowY = [rect.top];
-        for (let r = 0; r < rowWeights.length; r++) {
-            rowY.push(rowY[r] + rowWeights[r] * rect.height);
-        }
-        rowY[rows - 1] = rect.bottom;
-
-        const nodes = [];
-        const gridNodes = Array.from({ length: cols }, () => new Array(rows).fill(null));
-        let nextNodeId = 1;
-
-        const isCorner = (c, r) =>
-            (c === 0 && r === 0) ||
-            (c === cols - 1 && r === 0) ||
-            (c === 0 && r === rows - 1) ||
-            (c === cols - 1 && r === rows - 1);
-
-        // 1. Create nodes on aligned columns/rows (omitting the 4 corners so diagonal roads limit the town corners)
-        for (let c = 0; c < cols; c++) {
-            for (let r = 0; r < rows; r++) {
-                if (isCorner(c, r)) continue;
-
-                const onBoundary = (c === 0 || c === cols - 1 || r === 0 || r === rows - 1);
-                const x = Math.round(colX[c]);
-                const y = Math.round(rowY[r]);
-
-                const node = new RoadNode(nextNodeId++, x, y, onBoundary);
-                nodes.push(node);
-                gridNodes[c][r] = node;
+        for (let attempt = 0; attempt < CityGenerator.MAX_ATTEMPTS; attempt++) {
+            const points = CityGenerator._randomLoopPoints(rect);
+            if (CityGenerator._isValidLoop(points, Road.DEFAULT_WIDTH)) {
+                return CityGenerator._buildCity(width, height, rect, points);
             }
         }
 
+        // Practically unreachable; a fixed, known-valid shape keeps generation from ever failing
+        return CityGenerator._buildCity(width, height, rect, CityGenerator._fallbackLoopPoints(rect));
+    }
+
+    /**
+     * Corner points at increasing angles around the rect center (one point per angle, so the polygon
+     * is never self-intersecting). 3-4 non-adjacent points are pulled inward to create opposite turns.
+     */
+    static _randomLoopPoints(rect) {
+        const span = CityGenerator.MAX_CORNERS - CityGenerator.MIN_CORNERS + 1;
+        const count = CityGenerator.MIN_CORNERS + Math.floor(Random.next() * span);
+        const inward = CityGenerator._pickNonAdjacent(count, 3 + (Random.next() < 0.5 ? 1 : 0));
+
+        const cx = rect.left + rect.width * 0.5;
+        const cy = rect.top + rect.height * 0.5;
+        const rx = rect.width * 0.5;
+        const ry = rect.height * 0.5;
+        const step = (Math.PI * 2) / count;
+        const startAngle = Random.next() * Math.PI * 2;
+
+        const points = [];
+        for (let i = 0; i < count; i++) {
+            const angle = startAngle + i * step + (Random.next() - 0.5) * 0.4 * step;
+            const scale = inward.has(i)
+                ? 0.35 + Random.next() * 0.25
+                : 0.78 + Random.next() * 0.22;
+            points.push({
+                x: cx + Math.cos(angle) * rx * scale,
+                y: cy + Math.sin(angle) * ry * scale
+            });
+        }
+        return points;
+    }
+
+    /**
+     * Picks up to `wanted` indices out of a ring of `count`, no two of them next to each other.
+     */
+    static _pickNonAdjacent(count, wanted) {
+        const order = Array.from({ length: count }, (_, i) => i);
+        CityGenerator._shuffle(order);
+        const picked = new Set();
+        for (const i of order) {
+            if (picked.size >= wanted) break;
+            const prev = (i - 1 + count) % count;
+            const next = (i + 1) % count;
+            if (!picked.has(prev) && !picked.has(next)) {
+                picked.add(i);
+            }
+        }
+        return picked;
+    }
+
+    /**
+     * Checks a closed corner loop: segment lengths, turn sharpness, enough turns to each side,
+     * and enough space between the road surfaces of non-adjacent segments.
+     */
+    static _isValidLoop(points, roadWidth) {
+        const n = points.length;
+        let turnsOneWay = 0;
+        let turnsOtherWay = 0;
+
+        for (let i = 0; i < n; i++) {
+            const prev = points[(i - 1 + n) % n];
+            const curr = points[i];
+            const next = points[(i + 1) % n];
+
+            if (Math.hypot(next.x - curr.x, next.y - curr.y) < CityGenerator.MIN_SEGMENT_LENGTH) {
+                return false;
+            }
+
+            const inAngle = Math.atan2(curr.y - prev.y, curr.x - prev.x);
+            const outAngle = Math.atan2(next.y - curr.y, next.x - curr.x);
+            const turn = Vector2D.normalizeAngle(outAngle - inAngle);
+            if (Math.abs(turn) > CityGenerator.MAX_TURN_ANGLE) return false;
+            if (turn >= CityGenerator.MIN_COUNTED_TURN) turnsOneWay++;
+            else if (turn <= -CityGenerator.MIN_COUNTED_TURN) turnsOtherWay++;
+        }
+
+        if (turnsOneWay < CityGenerator.MIN_TURNS_EACH_WAY || turnsOtherWay < CityGenerator.MIN_TURNS_EACH_WAY) {
+            return false;
+        }
+
+        // Non-adjacent segments must keep their road surfaces apart
+        const minGap = roadWidth + CityGenerator.SURFACE_CLEARANCE;
+        for (let i = 0; i < n; i++) {
+            const a1 = points[i];
+            const a2 = points[(i + 1) % n];
+            for (let j = i + 2; j < n; j++) {
+                if (i === 0 && j === n - 1) continue; // adjacent through the loop closure
+                const b1 = points[j];
+                const b2 = points[(j + 1) % n];
+                if (CityGenerator._segmentDistance(a1, a2, b1, b2) < minGap) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    static _segmentDistance(a1, a2, b1, b2) {
+        if (Vector2D.segmentIntersection(a1.x, a1.y, a2.x, a2.y, b1.x, b1.y, b2.x, b2.y, 0)) {
+            return 0;
+        }
+        return Math.min(
+            Vector2D.closestPointOnSegment(a1.x, a1.y, b1.x, b1.y, b2.x, b2.y).dist,
+            Vector2D.closestPointOnSegment(a2.x, a2.y, b1.x, b1.y, b2.x, b2.y).dist,
+            Vector2D.closestPointOnSegment(b1.x, b1.y, a1.x, a1.y, a2.x, a2.y).dist,
+            Vector2D.closestPointOnSegment(b2.x, b2.y, a1.x, a1.y, a2.x, a2.y).dist
+        );
+    }
+
+    /**
+     * Fixed 12-corner loop with three inward corners, used only if no random candidate validates.
+     */
+    static _fallbackLoopPoints(rect) {
+        const cx = rect.left + rect.width * 0.5;
+        const cy = rect.top + rect.height * 0.5;
+        const scales = [1, 0.95, 0.5, 0.95, 1, 0.95, 0.5, 0.95, 1, 0.95, 0.5, 0.95];
+        return scales.map((scale, i) => {
+            const angle = (Math.PI * 2 * i) / scales.length;
+            return {
+                x: cx + Math.cos(angle) * rect.width * 0.5 * scale,
+                y: cy + Math.sin(angle) * rect.height * 0.5 * scale
+            };
+        });
+    }
+
+    /**
+     * Turns the loop corners into RoadNodes and Roads (corner i connects to corner i + 1).
+     */
+    static _buildCity(width, height, rect, points) {
+        const nodes = points.map((p, i) => new RoadNode(i + 1, Math.round(p.x), Math.round(p.y), false));
         const roads = [];
-        let nextRoadId = 1;
-        const roadKeySet = new Set();
-
-        /**
-         * Validates that adding a road between nodeA and nodeB:
-         *  1. Never exceeds 4 roads on either node
-         *  2. Does not duplicate an existing road
-         *  3. Does not geometrically cross any existing road
-         *  4. Maintains a smooth minimum angle (>= 38 deg) with existing roads at both nodes
-         */
-        const canAddRoad = (nodeA, nodeB) => {
-            if (!nodeA || !nodeB || nodeA === nodeB) return false;
-            if (nodeA.roads.length >= CityGenerator.MAX_ROADS_PER_NODE) return false;
-            if (nodeB.roads.length >= CityGenerator.MAX_ROADS_PER_NODE) return false;
-
-            const key = nodeA.id < nodeB.id
-                ? `${nodeA.id}-${nodeB.id}`
-                : `${nodeB.id}-${nodeA.id}`;
-            if (roadKeySet.has(key)) return false;
-
-            // Enforce >= 38 deg separation so roads never form narrow sticking-out wedges at intersections
-            const minAngleRad = 0.66;
-            const angleAB = Math.atan2(nodeB.y - nodeA.y, nodeB.x - nodeA.x);
-            for (const r of nodeA.roads) {
-                const other = r.getOtherNode(nodeA);
-                const existingAngle = Math.atan2(other.y - nodeA.y, other.x - nodeA.x);
-                if (Math.abs(Vector2D.normalizeAngle(angleAB - existingAngle)) < minAngleRad) {
-                    return false;
-                }
-            }
-
-            const angleBA = Math.atan2(nodeA.y - nodeB.y, nodeA.x - nodeB.x);
-            for (const r of nodeB.roads) {
-                const other = r.getOtherNode(nodeB);
-                const existingAngle = Math.atan2(other.y - nodeB.y, other.x - nodeB.x);
-                if (Math.abs(Vector2D.normalizeAngle(angleBA - existingAngle)) < minAngleRad) {
-                    return false;
-                }
-            }
-
-            // Ensure segment AB does not intersect any existing road segment
-            for (const existing of roads) {
-                if (
-                    existing.nodeA === nodeA || existing.nodeA === nodeB ||
-                    existing.nodeB === nodeA || existing.nodeB === nodeB
-                ) {
-                    continue;
-                }
-                const hit = Vector2D.segmentIntersection(
-                    nodeA.x, nodeA.y,
-                    nodeB.x, nodeB.y,
-                    existing.nodeA.x, existing.nodeA.y,
-                    existing.nodeB.x, existing.nodeB.y,
-                    0.01
-                );
-                if (hit) return false;
-            }
-
-            // Ensure segment AB does not pass close to another node's radius
-            for (const otherNode of nodes) {
-                if (otherNode === nodeA || otherNode === nodeB) continue;
-                const proj = Vector2D.closestPointOnSegment(
-                    otherNode.x, otherNode.y,
-                    nodeA.x, nodeA.y,
-                    nodeB.x, nodeB.y
-                );
-                if (proj.t > 0.05 && proj.t < 0.95 && proj.dist < otherNode.radius + 26) {
-                    return false;
-                }
-            }
-
-            return true;
-        };
-
-        const addRoad = (nodeA, nodeB, options = {}) => {
-            if (!canAddRoad(nodeA, nodeB)) return null;
-            const key = nodeA.id < nodeB.id
-                ? `${nodeA.id}-${nodeB.id}`
-                : `${nodeB.id}-${nodeA.id}`;
-            roadKeySet.add(key);
-
-            const road = new Road(nextRoadId++, nodeA, nodeB, options);
+        for (let i = 0; i < nodes.length; i++) {
+            const nodeA = nodes[i];
+            const nodeB = nodes[(i + 1) % nodes.length];
+            const road = new Road(i + 1, nodeA, nodeB, {});
             nodeA.addRoad(road);
             nodeB.addRoad(road);
             roads.push(road);
-            return road;
-        };
-
-        // 2. Connect the outer perimeter ring: straight boundary edges + 4 diagonal corner roads
-        // Top & Bottom straight edges
-        addRoad(gridNodes[1][0], gridNodes[2][0], { isPerimeter: true });
-        addRoad(gridNodes[1][3], gridNodes[2][3], { isPerimeter: true });
-        // Left & Right straight edges
-        addRoad(gridNodes[0][1], gridNodes[0][2], { isPerimeter: true });
-        addRoad(gridNodes[3][1], gridNodes[3][2], { isPerimeter: true });
-
-        // 4 Diagonal corner roads limiting the town within the rectangle
-        addRoad(gridNodes[1][0], gridNodes[0][1], { isPerimeter: true, isDiagonal: true });
-        addRoad(gridNodes[2][0], gridNodes[3][1], { isPerimeter: true, isDiagonal: true });
-        addRoad(gridNodes[0][2], gridNodes[1][3], { isPerimeter: true, isDiagonal: true });
-        addRoad(gridNodes[3][2], gridNodes[2][3], { isPerimeter: true, isDiagonal: true });
-
-        // 3. Add internal diagonal roads across the spacious center block
-        const n11 = gridNodes[1][1];
-        const n21 = gridNodes[2][1];
-        const n12 = gridNodes[1][2];
-        const n22 = gridNodes[2][2];
-
-        if (Random.next() < 0.5) {
-            // Pattern A: Central 4-way diagonal crossing node in the middle of the town
-            const cx = Math.round((n11.x + n21.x) * 0.5);
-            const cy = Math.round((n11.y + n12.y) * 0.5);
-            const centerNode = new RoadNode(nextNodeId++, cx, cy, false);
-            nodes.push(centerNode);
-
-            addRoad(n11, centerNode, { isDiagonal: true });
-            addRoad(centerNode, n22, { isDiagonal: true });
-            addRoad(n21, centerNode, { isDiagonal: true });
-            addRoad(centerNode, n12, { isDiagonal: true });
-        } else {
-            // Pattern B: Clean diagonal avenue across the center block
-            if (Random.next() < 0.5) {
-                addRoad(n11, n22, { isDiagonal: true });
-            } else {
-                addRoad(n21, n12, { isDiagonal: true });
-            }
         }
-
-        // 4. Add inner box orthogonal streets so the interior forms a connected loop
-        const innerOrthogonal = [
-            [n11, n21],
-            [n12, n22],
-            [n11, n12],
-            [n21, n22]
-        ];
-        CityGenerator._shuffle(innerOrthogonal);
-        for (const [a, b] of innerOrthogonal) {
-            addRoad(a, b, {});
-        }
-
-        // 5. Add orthogonal spokes connecting perimeter to interior nodes (up to <= 4 roads per node)
-        const spokeCandidates = [
-            [gridNodes[1][0], n11],
-            [gridNodes[2][0], n21],
-            [gridNodes[0][1], n11],
-            [gridNodes[0][2], n12],
-            [gridNodes[3][1], n21],
-            [gridNodes[3][2], n22],
-            [gridNodes[1][3], n12],
-            [gridNodes[2][3], n22]
-        ];
-        CityGenerator._shuffle(spokeCandidates);
-        for (const [a, b] of spokeCandidates) {
-            addRoad(a, b, {});
-        }
-
         return new City(width, height, rect, nodes, roads, Random.currentSeed);
     }
 
@@ -241,18 +201,5 @@ class CityGenerator {
             [arr[i], arr[j]] = [arr[j], arr[i]];
         }
         return arr;
-    }
-
-    static _randomPartition(parts, minShare = 0.25) {
-        const raw = [];
-        let sum = 0;
-        for (let i = 0; i < parts; i++) {
-            const v = 0.75 + Random.next() * 0.5;
-            raw.push(v);
-            sum += v;
-        }
-        const weights = raw.map(v => Math.max(minShare, v / sum));
-        const normSum = weights.reduce((a, b) => a + b, 0);
-        return weights.map(w => w / normSum);
     }
 }
