@@ -5,7 +5,7 @@
  * Supports orthogonal and diagonal road geometry.
  */
 class Road {
-    static DEFAULT_WIDTH = 53;
+    static DEFAULT_WIDTH = 64;
 
     /**
      * @param {number} id
