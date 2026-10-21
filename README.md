@@ -26,6 +26,7 @@
     2. **Bidirectional Throttle / Brake**: `> 0` accelerates forward; `< 0` brakes when moving forward or reverses from a stop
 - **1 to 4 Selectable Boid Archetypes**
   - Choose between **1 to 4 vehicle types** (`Sedan`, `Compact`, `Sports`, `Heavy`), each with distinct top speed, acceleration, braking force, turn rate, radius, and mass.
+  - **Default: 1 type (`Sedan`).** In headless tests (55 boids, 60 generations, 3 seeds) a single type gave fewer collisions (`9.3` vs `12.2` with 2 types and `19.0` with 4), fewer stuck boids and less noisy scores. With several types the fastest one takes over the population anyway (Sedan ~91% with 2 types, Sports ~61% with 4), because fitness rewards distance.
   - Offspring inherit their parent's vehicle archetype during evolution so neural networks specialize in their vehicle's physical dynamics.
 - **Non-Collapsing Physics**
   - Hard road-border containment and pairwise collision resolution keep boids from overlapping or escaping the road network.

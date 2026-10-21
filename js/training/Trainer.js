@@ -24,7 +24,8 @@ class Trainer {
      */
     constructor(config = {}) {
         this.populationSize = config.populationSize || 55;
-        this.boidTypesCount = config.boidTypesCount || 2;
+        // One vehicle type by default: with several types the fastest one takes over selection anyway
+        this.boidTypesCount = config.boidTypesCount || 1;
         this.generationDuration = config.generationDuration || 30.0;
         this.mutationRate = config.mutationRate || 0.14;
         this.mutationStrength = config.mutationStrength || 0.24;

@@ -22,7 +22,7 @@ class Simulation {
 
         this.trainer = new Trainer({
             populationSize: 55,
-            boidTypesCount: 2,
+            boidTypesCount: 1,
             generationDuration: 30.0,
             mutationRate: 0.14,
             mutationStrength: 0.24
@@ -116,7 +116,7 @@ class Simulation {
         const popInput = document.getElementById('input-pop-size');
         const popSize = popInput ? parseInt(popInput.value, 10) || 55 : 55;
         const selectTypes = document.getElementById('select-boid-types');
-        const typesCount = selectTypes ? parseInt(selectTypes.value, 10) || 2 : 2;
+        const typesCount = selectTypes ? parseInt(selectTypes.value, 10) || 1 : 1;
         const selectDuration = document.getElementById('select-gen-duration');
         const genDuration = selectDuration ? parseInt(selectDuration.value, 10) || 30 : 30;
         const chkRotateCity = document.getElementById('chk-rotate-city');
@@ -264,7 +264,7 @@ class Simulation {
         const selectBoidTypes = document.getElementById('select-boid-types');
         if (selectBoidTypes) {
             selectBoidTypes.addEventListener('change', e => {
-                const count = Math.max(1, Math.min(4, parseInt(e.target.value, 10) || 2));
+                const count = Math.max(1, Math.min(4, parseInt(e.target.value, 10) || 1));
                 this.trainer.boidTypesCount = count;
                 this.boids = this.trainer.createInitialPopulation(this.city);
                 this.selectedBoid = null;
