@@ -13,6 +13,9 @@ class Boid {
     static TRAIL_LENGTH = 20;
     static TRAIL_INTERVAL = 4;
 
+    // After a stuck boid is respawned, a ghost dot marks where it was for this many simulated seconds
+    static RESPAWN_GHOST_DURATION = 2.0;
+
     static ARCHETYPES = [
         {
             name: 'Sedan',
@@ -139,6 +142,13 @@ class Boid {
 
         // Ghost trail ring buffer of recent positions (x0, y0, x1, y1, ...), oldest overwritten first
         this.trail = new Float32Array(Boid.TRAIL_LENGTH * 2);
+
+        // Last respawn (for the ghost dot): old and new position, and simulated seconds since it happened
+        this.respawnFromX = 0;
+        this.respawnFromY = 0;
+        this.respawnToX = 0;
+        this.respawnToY = 0;
+        this.respawnAge = Infinity;
         this.trailCount = 0;
         this.trailHead = 0;
         this._trailTick = 0;
@@ -184,6 +194,7 @@ class Boid {
      */
     update(dt, city, allBoids, grid = null) {
         this.timeAlive += dt;
+        this.respawnAge += dt;
         if (this.collisionCooldown > 0) {
             this.collisionCooldown = Math.max(0, this.collisionCooldown - dt);
         }
@@ -397,6 +408,11 @@ class Boid {
             if (this.stuckTimer > 3.6) {
                 const newPose = city.getRandomSpawnPose(allBoids);
                 this.clearTrail(); // teleported: do not draw a trail across the map
+                this.respawnFromX = this.x;
+                this.respawnFromY = this.y;
+                this.respawnToX = newPose.x;
+                this.respawnToY = newPose.y;
+                this.respawnAge = 0;
                 this.x = newPose.x;
                 this.y = newPose.y;
                 this.heading = newPose.heading;

@@ -74,9 +74,10 @@ class SimulationRenderer {
             this._renderDistanceField(ctx, city);
         }
 
-        // 2d. Fading ghost trails behind the boids
+        // 2d. Fading ghost trails behind the boids, and ghost dots where stuck boids were respawned from
         if (this.showTrails) {
             this._renderTrails(ctx, boids);
+            this._renderRespawnGhosts(ctx, boids);
         }
 
         // 3. Render all boids
@@ -367,6 +368,51 @@ class SimulationRenderer {
                 prevX = x;
                 prevY = y;
             }
+        }
+        ctx.restore();
+    }
+
+    /**
+     * For boids respawned in the last RESPAWN_GHOST_DURATION seconds: a fading ghost dot where the boid
+     * got stuck, a faint dashed line to where it was placed, and an expanding ring at the new spot.
+     */
+    _renderRespawnGhosts(ctx, boids) {
+        ctx.save();
+        for (const boid of boids) {
+            if (boid.respawnAge >= Boid.RESPAWN_GHOST_DURATION) continue;
+            const t = boid.respawnAge / Boid.RESPAWN_GHOST_DURATION;
+            const fade = 1 - t;
+            const r = boid.length * 0.55;
+
+            // Ghost dot at the old position
+            ctx.globalAlpha = 0.55 * fade;
+            ctx.fillStyle = boid.color;
+            ctx.beginPath();
+            ctx.arc(boid.respawnFromX, boid.respawnFromY, r, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalAlpha = 0.9 * fade;
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([3, 3]);
+            ctx.stroke();
+
+            // Faint dashed line from the old to the new position
+            ctx.globalAlpha = 0.3 * fade;
+            ctx.strokeStyle = boid.color;
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([6, 6]);
+            ctx.beginPath();
+            ctx.moveTo(boid.respawnFromX, boid.respawnFromY);
+            ctx.lineTo(boid.respawnToX, boid.respawnToY);
+            ctx.stroke();
+
+            // Expanding ring at the new position
+            ctx.setLineDash([]);
+            ctx.globalAlpha = 0.85 * fade;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(boid.respawnToX, boid.respawnToY, r + boid.length * 1.1 * t, 0, Math.PI * 2);
+            ctx.stroke();
         }
         ctx.restore();
     }
