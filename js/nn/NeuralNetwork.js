@@ -12,6 +12,12 @@ class NeuralNetwork {
     // Number of most recent generation scores remembered per network (see recordScore)
     static EVAL_WINDOW = 5;
 
+    // Heavy-tailed mutation: this share of mutation steps is MUTATION_JUMP_FACTOR times larger.
+    // Occasional big jumps explore further while most steps stay small; in headless tests this beat
+    // both uniformly weaker and uniformly stronger mutation on the benchmark
+    static MUTATION_JUMP_CHANCE = 0.1;
+    static MUTATION_JUMP_FACTOR = 5;
+
     /**
      * @param {number[]} layerSizes - Array of neuron counts per layer, default NeuralNetwork.DEFAULT_LAYOUT
      */
@@ -233,17 +239,26 @@ class NeuralNetwork {
         for (let l = 0; l < this.weights.length; l++) {
             for (let j = 0; j < this.weights[l].length; j++) {
                 if (Random.next() < rate) {
-                    this.biases[l][j] += NeuralNetwork.gaussianRandom() * amount;
+                    this.biases[l][j] += NeuralNetwork._mutationStep(amount);
                     this.biases[l][j] = Math.max(-3.5, Math.min(3.5, this.biases[l][j]));
                 }
                 for (let i = 0; i < this.weights[l][j].length; i++) {
                     if (Random.next() < rate) {
-                        this.weights[l][j][i] += NeuralNetwork.gaussianRandom() * amount;
+                        this.weights[l][j][i] += NeuralNetwork._mutationStep(amount);
                         this.weights[l][j][i] = Math.max(-3.5, Math.min(3.5, this.weights[l][j][i]));
                     }
                 }
             }
         }
+    }
+
+    /**
+     * One mutation step: Gaussian noise scaled by amount, occasionally (MUTATION_JUMP_CHANCE) multiplied
+     * by MUTATION_JUMP_FACTOR.
+     */
+    static _mutationStep(amount) {
+        const step = NeuralNetwork.gaussianRandom() * amount;
+        return Random.next() < NeuralNetwork.MUTATION_JUMP_CHANCE ? step * NeuralNetwork.MUTATION_JUMP_FACTOR : step;
     }
 
     static gaussianRandom() {
