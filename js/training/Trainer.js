@@ -3,7 +3,7 @@
  * over generations, tracks historical metrics for charts, and preserves elite brains.
  */
 class Trainer {
-    // Maximum number of generation history points kept (in memory and in localStorage)
+    // Number of most recent generations kept in the chart history (in memory and in localStorage)
     static HISTORY_MAX_POINTS = 500;
 
     // A network only becomes champion after this many evaluations (averaged), so one lucky run never counts
@@ -147,7 +147,7 @@ class Trainer {
             entry.benchmarkDistance = Number(benchmark.distance.toFixed(1));
         }
         this.history.push(entry);
-        this._compactHistory();
+        this._trimHistory();
 
         // Keep top elites (by average score); slot 0 is the champion
         const eliteCount = Math.max(4, Math.floor(this.populationSize * 0.12));
@@ -262,13 +262,12 @@ class Trainer {
     }
 
     /**
-     * Keeps the history within HISTORY_MAX_POINTS without dropping the start of the run:
-     * once the limit is exceeded, every odd-indexed point is removed, halving the history
-     * (500 -> ~250) while keeping the first generation and the most recent one.
+     * Keeps only the most recent HISTORY_MAX_POINTS generations; older entries are dropped.
      */
-    _compactHistory() {
-        while (this.history.length > Trainer.HISTORY_MAX_POINTS) {
-            this.history = this.history.filter((_, i) => i % 2 === 0);
+    _trimHistory() {
+        const excess = this.history.length - Trainer.HISTORY_MAX_POINTS;
+        if (excess > 0) {
+            this.history.splice(0, excess);
         }
     }
 
@@ -314,7 +313,7 @@ class Trainer {
             allTimeBestArchetype: this.allTimeBestArchetype,
             allTimeBestBrain: this.allTimeBestBrain ? this.allTimeBestBrain.serialize() : null,
             eliteBrains: this.eliteBrains.map(b => b.serialize()),
-            history: this.history
+            history: this.history.slice(-Trainer.HISTORY_MAX_POINTS)
         };
     }
 
@@ -330,7 +329,7 @@ class Trainer {
         this.allTimeBestFitness = data.allTimeBestFitness ?? -Infinity;
         this.allTimeBestArchetype = data.allTimeBestArchetype || 'Sedan';
         this.history = Array.isArray(data.history) ? data.history : [];
-        this._compactHistory();
+        this._trimHistory();
 
         // Saved brains are only reused if they match the current network layout; brains from an
         // older layout (or a corrupted save) are discarded so they can never be mixed with new ones
